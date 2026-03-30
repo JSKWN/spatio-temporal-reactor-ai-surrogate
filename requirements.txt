@@ -1,3 +1,38 @@
+# ============================================================
+# spatio-temporal-reactor-ai-surrogate 의존성
+# ============================================================
+#
+# [Python 버전]
+#   Python 3.9 ~ 3.11 필수 (권장: 3.11.x)
+#   TF 2.14는 Python 3.12 이상 미지원
+#
+# [GPU 사용 시 — CUDA / cuDNN 호환성]
+#   TF 2.14 공식 호환:
+#     - CUDA Toolkit: 11.8
+#     - cuDNN: 8.6 이상 (권장 8.7)
+#     - NVIDIA Driver: >= 525.60.13 (Linux) / >= 528.33 (Windows)
+#
+#   설치 방법 (택 1):
+#     1. pip install tensorflow[and-cuda]==2.14.*
+#        → pip가 CUDA/cuDNN을 자동으로 설치 (Linux 전용, Windows 미지원)
+#     2. CUDA Toolkit 11.8 + cuDNN 8.7 수동 설치 후 pip install tensorflow==2.14.*
+#        → Windows에서는 이 방법만 가능
+#     3. conda install tensorflow-gpu=2.14
+#        → conda가 CUDA/cuDNN 자동 관리
+#
+#   참고: https://www.tensorflow.org/install/source#gpu
+#
+# [CPU 전용]
+#   pip install tensorflow==2.14.*
+#   → Windows에서는 tensorflow-intel 패키지가 자동 설치됨
+#
+# [ONNX 변환]
+#   tf2onnx: TF SavedModel → ONNX 변환
+#   onnxruntime: ONNX 추론 (C++20 연동용)
+#   tf2onnx >= 1.16은 TF 2.14와 호환 확인됨
+#
+# ============================================================
+
 tensorflow==2.14.*
 numpy>=1.24,<2.0
 h5py>=3.9
