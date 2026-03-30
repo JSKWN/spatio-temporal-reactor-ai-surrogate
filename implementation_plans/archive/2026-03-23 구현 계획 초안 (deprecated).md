@@ -1,3 +1,5 @@
+> [deprecated 2026-03-30] Mamba SSM 수학 → `2026-03-30 Mamba SSM 수학 레퍼런스.md`. 나머지 → `2026-03-29 모델 구현 계획.md`. HDF5명 구스키마 주의.
+
 # Spatio-Temporal Reactor AI Surrogate 구현 계획 및 Mamba SSM 작동원리 정리
 
 ## 요약

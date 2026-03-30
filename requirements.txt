@@ -1,0 +1,10 @@
+tensorflow==2.14.*
+numpy>=1.24,<2.0
+h5py>=3.9
+pyyaml>=6.0
+scipy>=1.11
+tensorboard==2.14.*
+matplotlib>=3.8
+tf2onnx>=1.16
+onnxruntime>=1.17
+pytest>=7.4

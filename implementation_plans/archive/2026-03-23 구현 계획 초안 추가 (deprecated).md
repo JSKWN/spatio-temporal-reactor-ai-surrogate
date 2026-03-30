@@ -1,3 +1,5 @@
+> [deprecated 2026-03-30] D=24 패딩 → D=20 해결됨. ViT3D 문제 → Conv3D 전환으로 해당없음. 아키텍처 → `2026-03-29 모델 구현 계획.md` §3.
+
 # Spatio-Temporal Reactor AI Surrogate — 수정·상세 설계 계획서 (TF2 기반)
 
 > 수정 반영 사항: TensorFlow 2 / Keras 유지, `SuperpositioningNeighborCells`·`BoundaryPad` 제거, ViT3D 로컬 정보 손실 문제 분석, Mamba hidden state 공간 해상도 논의

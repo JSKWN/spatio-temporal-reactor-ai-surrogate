@@ -1,0 +1,612 @@
+# Physical Loss 통합 레퍼런스
+
+> **작성일**: 2026-03-30
+> **목적**: 산재된 Physical Loss 관련 설계/검증 문서를 단일 참조 문서로 통합
+> **적용 대상**: 경수형 SMR의 부하추종 노심 해석 대리모델
+> **공간 형상**: (20, 5, 5) = (축방향 Z=20, 반경 y=5, x=5), 1/4 대칭, 500노드
+> **시간 간격**: Δt = 300s (5분)
+
+## 목차
+
+0. [HDF5 데이터 스키마 Overview](#0-hdf5-데이터-스키마-overview)
+1. [L_Bateman — Xe/I-135 Bateman ODE 잔차](#1-l_bateman--xei-135-bateman-ode-잔차)
+   - 1.1 연립 방정식 / 1.2 물리 상수 / 1.3 핵분열 수율 / 1.4 평형 농도
+   - 1.5 barn-cm 단위 / 1.6 Markov 상태 변수 / 1.7 수치 적분 방법 / 1.8 MASTER와의 차이
+   - 1.9 손실 정의 / 1.10 TF2 구현 패턴
+2. [L_sigma_a_Xe — 제논 미시단면적 일관성](#2-l_sigma_a_xe--제논-미시단면적-일관성)
+   - 2.1 MASTER 내부 계산 메커니즘 / 2.2 데이터 취득 / 2.3 검증 결과
+   - 2.4 손실 정의 / 2.5 TF2 구현 패턴
+3. [L_diffusion — 확산방정식 PDE 잔차 (확장용)](#3-l_diffusion--확산방정식-pde-잔차-확장용)
+4. [L_keff — K-eff Rayleigh 몫 (확장용)](#4-l_keff--k-eff-rayleigh-몫-확장용)
+5. [가중치 전략](#5-가중치-전략)
+6. [물리량-데이터 매핑 요약](#6-물리량-데이터-매핑-요약)
+7. [구현 시 주의사항](#7-구현-시-주의사항)
+- [Appendix A. Bateman ODE — Euler vs 해석해 오차 검증](#appendix-a-bateman-ode--euler-vs-해석해-오차-검증)
+- [Appendix B. σ_a^Xe 검증 상세 (E0-d/e/f, E1)](#appendix-b-σ_axe-검증-상세-e0-def-e1)
+
+---
+
+## 0. HDF5 데이터 스키마 Overview
+
+> 원본 코드: `data_preprocess/lf_preprocess/dataset_builder.py`
+
+현재 전처리 코드가 생성하는 HDF5 데이터셋의 전체 구조. 모델 학습 및 Physical Loss 계산에 사용되는 데이터의 출처.
+
+### 0.1 고정 데이터 (`fixed/`) — BU=0 기준, 연소도 미반영
+
+**현재 상태**: MAS_XSL에서 **BU=0(BOC) 인덱스 1개만** 추출하여 고정값으로 저장.
+연소도에 따른 변화를 반영하지 않으며, LP가 결정되면 BOC 48h 운전 기간 내 불변 취급.
+추후 Phase F에서 BU 전체 격자(σ₀: 72점, 미분계수: 14점)를 저장하고 런타임에 현재 연소도로 보간하는 구조로 확장 예정.
+
+| HDF5 경로 | Shape | dtype | 물리량 | 단위 | 출처 |
+|-----------|-------|-------|--------|------|------|
+| `fixed/xs_fuel` | (Z,qH,qW,10) | float32 | 10채널 거시단면적 (νΣf1, Σf1, Σc1, Σtr1, Σs12, νΣf2, Σf2, Σc2, Σtr2, Σs21) | /cm | MAS_XSL 파싱 |
+| `fixed/taylor_xe35/sigma_0` | (Z,qH,qW,2) | float64 | σ₀ 기준 미시단면적 (2군) | barn | MAS_XSL XE35 블록 |
+| `fixed/taylor_xe35/d_sigma_dP` | (Z,qH,qW,2) | float64 | ∂σ/∂PPM | barn/ppm | MAS_XSL |
+| `fixed/taylor_xe35/d_sigma_dTf` | (Z,qH,qW,2) | float64 | ∂σ/∂√T_f | barn/√K | MAS_XSL |
+| `fixed/taylor_xe35/d_sigma_dM` | (Z,qH,qW,2,6) | float64 | ∂σ/∂ρ_m (6구간 piecewise) | barn/(g/cc) | MAS_XSL |
+| `fixed/taylor_xe35/ref_conditions` | (4,) | float64 | [REFPPM, REFTF, REFTM, REFDM] | ppm, °C, °C, g/cc | MAS_XSL 헤더 |
+| `fixed/taylor_xe35/dmod_delta` | (6,) | float64 | ΔM 밀도 편차 격자 | g/cc | MAS_XSL COMP 헤더 |
+
+> **연소도 미반영 항목**: xs_fuel, Taylor 계수 전부 — BU=0 단일 인덱스만 저장된 상태. Phase F에서 BU 보간 동적 갱신 예정.
+
+### 0.2 시나리오 시계열 데이터 (`scenarios/{profile}/`)
+
+매 스텝(Δt=5min)·매 노드별로 MASTER 해석 결과에서 추출.
+
+**Critical 상태 (CRS 궤적, 시점 t의 노심 상태)**:
+
+| HDF5 필드 | Shape | dtype | 물리량 | 단위 | MAS_NXS 컬럼 | Loss 사용 |
+|-----------|-------|-------|--------|------|:------------:|:---------:|
+| `critical_xe` | (T,Z,qH,qW) | float64 | N_Xe 수밀도 | #/barn-cm | `DEN-XEN` | L_Bateman |
+| `critical_sm` | (T,Z,qH,qW) | float64 | N_Sm 수밀도 | #/barn-cm | `DEN-SAM` | — |
+| `critical_i135` | (T,Z,qH,qW) | float64 | N_I 수밀도 | #/barn-cm | MAS_OUT `$NUCL3D` | L_Bateman |
+| `critical_sigma_a_xe` | (T,Z,qH,qW,2) | float64 | σ_a^Xe 미시 흡수단면적 (2군) | barn | `ABS-XEN` | L_Bateman, L_σXe |
+| `critical_flux` | (T,Z,qH,qW,2) | float64 | φ 중성자속 (2군) | n/cm²/s | `FLX` | L_Bateman |
+| `critical_Sigma_f` | (T,Z,qH,qW,2) | float64 | Σ_f 핵분열 거시단면적 (2군) | /cm | `FIS` | L_Bateman |
+| `critical_yield_xe` | (T,Z,qH,qW) | float64 | γ_Xe 핵분열 수율 | 무차원 | `FYLD-XE135` | L_Bateman |
+| `critical_yield_i` | (T,Z,qH,qW) | float64 | γ_I 핵분열 수율 | 무차원 | `FYLD-I135` | L_Bateman |
+
+**쿼리 (입력 조건)**:
+
+| HDF5 필드 | Shape | dtype | 물리량 | 단위 |
+|-----------|-------|-------|--------|------|
+| `query_rod_map_3d` | (T,31,Z,qH,qW) | float32 | 제어봉 3D 삽입 분율 맵 | 0~1 |
+| `query_rod_offsets_1d` | (T,31) | float32 | 1D rod offset | step |
+| `query_pload` | (T,) | float32 | 목표 출력 수준 | 0~1 |
+
+**해석 결과 (GT 타겟, 31-way: index 0=critical, 1~30=branch)**:
+
+| HDF5 필드 | Shape | dtype | 물리량 | 단위 | Loss 사용 |
+|-----------|-------|-------|--------|------|:---------:|
+| `result_power` | (T,31,Z,qH,qW) | float32 | 절대 열출력 | MW/node | L_rec |
+| `result_tcool` | (T,31,Z,qH,qW) | float32 | 냉각재 온도 | °C | L_rec |
+| `result_tfuel` | (T,31,Z,qH,qW) | float32 | 연료 온도 | °C | L_rec, L_σXe(예측) |
+| `result_rhocool` | (T,31,Z,qH,qW) | float32 | 냉각재 밀도 | g/cc | L_rec, L_σXe(예측) |
+| `result_keff` | (T,31) | float64 | 유효증배계수 | — | L_rec, L_keff |
+| `result_ao` | (T,31) | float32 | 축방향 출력 편차 | — | L_rec |
+| `result_max_pin_power` | (T,31) | float32 | 핀 출력 peaking factor | — | — |
+| `result_max_pin_loc` | (T,31,3) | int32 | 핀 피크 위치 (z,y,x) | — | — |
+
+**Branch 핵종 데이터 (31-way)**:
+
+| HDF5 필드 | Shape | dtype | 물리량 | 비고 |
+|-----------|-------|-------|--------|------|
+| `branch_xe` | (T,31,Z,qH,qW) | float64 | N_Xe | Frozen Xenon: CRS와 거의 동일 |
+| `branch_sm` | (T,31,Z,qH,qW) | float64 | N_Sm | |
+| `branch_i135` | (T,31,Z,qH,qW) | float64 | N_I | |
+| `branch_sigma_a_xe` | (T,31,Z,qH,qW,2) | float64 | σ_a^Xe (2군) | branch 조건(T_f, ρ_m 변동)에 따라 미세 차이 |
+| `branch_flux` | (T,31,Z,qH,qW,2) | float64 | φ (2군) | |
+| `branch_Sigma_f` | (T,31,Z,qH,qW,2) | float64 | Σ_f (2군) | |
+| `branch_yield_xe` | (T,31,Z,qH,qW) | float64 | γ_Xe | |
+| `branch_yield_i` | (T,31,Z,qH,qW) | float64 | γ_I | |
+
+> **node_fullcore 데이터** (분석/참조용): 위 critical/branch 필드 중 일부가 quarter crop 전 풀코어(Z,18,18) 형태로도 저장됨. 모델 학습에는 사용하지 않음.
+
+### 0.3 차원 정의
+
+| 기호 | 값 | 의미 |
+|:----:|:---:|------|
+| T | 576 | 시계열 스텝 수 (48h ÷ 5min) |
+| Z | 20 | 축방향 연료 평면 (반사체 K=1, K=22 제외) |
+| qH, qW | 5, 5 | 1/4 대칭 크롭 후 반경 방향 |
+| 2 | 2 | 에너지군 (g=1: fast, g=2: thermal) |
+| 31 | 31 | CRS(1) + Branch(30) |
+| 10 | 10 | xs_fuel 채널 수 (νΣf1, Σf1, Σc1, Σtr1, Σs12, νΣf2, Σf2, Σc2, Σtr2, Σs21) |
+
+---
+
+## 1. L_Bateman — Xe/I-135 Bateman ODE 잔차
+
+### 1.1 연립 방정식
+
+**I-135:**
+
+$$\frac{dN_I}{dt} = \gamma_I \,\Sigma_f \,\phi - \lambda_I \,N_I \quad \text{[Eq.1]}$$
+
+**Xe-135:**
+
+$$\frac{dN_{Xe}}{dt} = \gamma_{Xe}\,\Sigma_f\,\phi + \lambda_I\,N_I - \lambda_{Xe}\,N_{Xe} - \sigma_a^{Xe}\,\phi\,N_{Xe} \quad \text{[Eq.2]}$$
+
+### 1.2 물리 상수 (불변)
+
+| 기호 | 의미 | 값 | 단위 |
+|------|------|-----|------|
+| λ_I | I-135 붕괴상수 | 2.875×10⁻⁵ | s⁻¹ (T½≈6.70h) |
+| λ_Xe | Xe-135 붕괴상수 | 2.0916×10⁻⁵ | s⁻¹ (T½≈9.17h) |
+| Δt | 시간 간격 | 300 | s |
+
+### 1.3 핵분열 수율 (MASTER 출력, 시계열)
+
+| 기호 | 의미 | 대표값 | MAS_NXS 컬럼 | HDF5 필드 |
+|------|------|:------:|:------------:|-----------|
+| γ_I | I-135 누적 핵분열 수율 | ~0.0639 | `FYLD-I135` | `critical_yield_i` (T,Z,qH,qW) |
+| γ_Xe | Xe-135 직접 핵분열 수율 | ~0.00228 | `FYLD-XE135` | `critical_yield_xe` (T,Z,qH,qW) |
+
+> **주의**: γ_I, γ_Xe는 물리 상수가 아님. MASTER가 매 계산 시점·노드별로 내부 산출하여 MAS_NXS에 출력한 값.
+> 정확한 내부 의존성(연소도, 조성 등)은 추가 확인 필요하나, 노드별·스텝별 변동이 존재하므로 상수 취급하지 않음.
+> 학습 시에는 HDF5 시계열 값을 사용하고, 추론 시에는 대표값 또는 고정 라이브러리 값 사용 가능.
+
+### 1.4 평형 Xe-135 농도 (참고)
+
+$$N_{Xe}^{eq} = \frac{(\gamma_I + \gamma_{Xe})\,\Sigma_f\,\phi}{\lambda_{Xe} + \sigma_a^{Xe}\,\phi} \quad \text{[Eq.3]}$$
+
+고출력에서 σ_a^Xe·φ ≫ λ_Xe → 평형 Xe 농도가 출력에 거의 무관해지는 포화 특성.
+
+### 1.5 barn-cm 단위계 적용
+
+> 원본: `2026-03-26 physical loss 적용단계 계획.md` §3-1
+
+HDF5 데이터의 수밀도 N은 [#/barn-cm] 단위. Σ_f[/cm]×φ[n/cm²/s] = [반응/cm³/s]이므로,
+N [#/barn-cm] 단위와 맞추려면 **×1e-24** 필요 (∵ 1/cm³ = 1e-24/barn-cm).
+
+```
+dN_Xe/dt [#/barn-cm/s] =
+   γ_Xe × (Σ_f_g1×φ_g1 + Σ_f_g2×φ_g2) × 1e-24     ← 생산 (cm³→barn-cm 변환)
+ + λ_I × N_I                                          ← I-135 붕괴 → Xe 유입
+ - λ_Xe × N_Xe                                        ← Xe 자연 붕괴
+ - (σ_g1×φ_g1 + σ_g2×φ_g2) × N_Xe × 1e-24           ← 중성자 흡수 (cm³→barn-cm)
+
+dN_I/dt [#/barn-cm/s] =
+   γ_I × (Σ_f_g1×φ_g1 + Σ_f_g2×φ_g2) × 1e-24       ← 핵분열 생산
+ - λ_I × N_I                                           ← I-135 붕괴
+```
+
+**λ×N 항은 변환 불필요**: λ[/s]×N[#/barn-cm] = [#/barn-cm/s]로 이미 동일 단위.
+
+### 1.6 Markov 상태 변수
+
+#### 1.6.1 마르코프 성질 요건
+
+**대상**: Bateman ODE (Xe-135/I-135 연립방정식, Eq.1~2)의 시간 진화.
+**요건**: 현재 상태 s_t만으로 dN/dt의 우변이 완전히 결정되어야 함 — 즉 Eq.1~2의 우변에 나타나는 **모든 물리량**이 s_t에 포함되어야 한다.
+**대표적 위반**: I-135 누락 → Xe 생성의 ~95%가 I-135 붕괴 경유이므로 마르코프 성질 깨짐.
+
+#### 1.6.2 필수 상태 변수
+
+| 카테고리 | 변수 | Shape | 마르코프 필요 이유 |
+|----------|------|-------|--------------------|
+| 독물질 | N_Xe(t) | (Z,qH,qW) | Eq.2 직접 상태변수 |
+| 독물질 | N_I(t) | (Z,qH,qW) | Xe 간접 생성원 |
+| 중성자속 | φ(t) | (Z,qH,qW,2) | 생성항·소멸항 계수 (2군) |
+| 단면적 | Σ_f(t) | (Z,qH,qW,2) | 핵분열 생산항 (2군) |
+| 단면적 | σ_a^Xe(t) | (Z,qH,qW,2) | Xe 소멸항 계수 (2군). MASTER에서 Σ_a^Xe(거시) 직접 출력 불가 → σ [barn] × N으로 계산 |
+| 열수력 | T_fuel(t) | (Z,qH,qW) | Doppler → σ_a^Xe 보정 |
+| 열수력 | ρ_mod(t) | (Z,qH,qW) | 감속능 → 스펙트럼 → σ_a^Xe |
+| 연소도 | Bu | (Z,qH,qW) | σ_a^Xe 보간 기준축 |
+| 제어봉 | rod_map(t) | (Z,qH,qW) | 국소 중성자속 분포 변화 |
+
+#### 1.6.3 물리량 분류 (학습/Loss 관점)
+
+| 분류 | 물리량 | HDF5 위치 | 비고 |
+|------|--------|-----------|------|
+| **시계열** (scenarios/) | N_Xe, N_I, σ_a^Xe, Σ_f, φ, γ_Xe, γ_I, T_f, ρ_m, P, keff, AO | critical_*, branch_* | 매 스텝·노드별 변동 (MAS_NXS에서 파싱) |
+| **LP 고정** (fixed/) | xs_fuel, Taylor 계수 (σ_0, ∂σ/∂Tf, ∂σ/∂M) | fixed/taylor_xe35/ | Loss 파라미터로만 사용 |
+| **물리 상수** | λ_Xe, λ_I, Δt | 하드코딩 | 불변 (§1.2) |
+| **BU 의존** (BOC 고정) | xs_fuel, Taylor 계수 | Phase F에서 보간 갱신 | BOC 48h 내 상수 취급 |
+
+> **γ_Xe, γ_I 분류 근거**: §1.3 참조. MAS_NXS `FYLD-XE135`, `FYLD-I135` 컬럼에서 파싱되며 노드별 변동이 존재하므로 시계열로 분류.
+
+### 1.7 수치 적분 방법
+
+**공통 가정**: Δt(=300s) 구간 내에서 φ(t), σ_a^Xe(t), Σ_f(t), γ(t) 등 ODE 계수를 **시점 t의 값으로 고정**(piecewise-constant 가정). 이 가정 하에서 Bateman ODE는 상수 계수 선형 ODE가 되어 아래 두 방법이 모두 적용 가능하다.
+
+**Euler forward** (1줄):
+
+$$N(t+\Delta t) = N(t) + \Delta t \cdot \frac{dN}{dt}\bigg|_t$$
+
+1차 절단 오차 O(Δt²). Δt/τ_Xe ≈ 0.006이므로 국소 절단 오차 ~0.09%.
+
+**해석해** (행렬 지수함수):
+
+$$\mathbf{N}(t+\Delta t) = e^{A\Delta t}\,\mathbf{N}(t) + A^{-1}(e^{A\Delta t} - I)\,\mathbf{S} \quad \text{[Eq.6]}$$
+
+piecewise-constant 가정 하에서 닫힌 해. φ를 Δt 내 상수로 고정한 뒤 행렬 지수함수로 적분.
+
+**E1-T5b 비교** (Appendix A 참조): 두 방법의 차이는 mean 0.02%p, max 0.04%p. Δt=300s에서 적분 방법 차이는 무시할 수 있는 수준이나, **두 방법이 수학적으로 동일하지는 않음** — 해석해가 이론적으로 더 정확하나 실질적 개선은 미미.
+
+### 1.8 MASTER와의 구조적 차이
+
+MASTER(EXE_DEP)는 해석해 + **Predictor-Corrector(SWPC)** 방식을 사용한다 (방법론 34080142.pdf §10.3.1, p.93-94):
+
+1. **Predictor**: 시점 t의 φ(t), σ(t)로 해석해 적분 → N̄(t+1) 예측
+2. **중성자 수송 + 열수력 재계산**: N̄(t+1)을 반영하여 φ(t+1), σ(t+1) 갱신
+3. **Corrector**: 갱신된 계수의 가중평균으로 해석해 재적분 → N(t+1) 최종값
+
+**우리 모델의 차이**: 시점 t의 GT 값만 사용하여 1회 적분 → 중간 재계산(step 2~3) 없음.
+
+이 차이 + 열수력 피드백 미반영 등의 **복합 요인**이 MASTER GT 대비 ~0.9% 바닥 오차를 유발 (E1-T5c에서 PC를 모방해도 0.905%로 수렴 → 적분법 개선만으로는 해소 불가).
+
+> **향후 검토**: 이 구조적 차이를 어떻게 해소할지는 모델 학습 결과를 확인한 후 결정. L_rec(MSE)가 보완할 것으로 기대.
+
+### 1.9 손실 정의
+
+$$\mathcal{L}_{Bateman} = \frac{1}{B \cdot V} \sum_{b,v} \left[ \left(\hat{N}_{Xe,b,v}(t\!+\!1) - N_{Xe,b,v}^{phys}\right)^2 + \left(\hat{N}_{I,b,v}(t\!+\!1) - N_{I,b,v}^{phys}\right)^2 \right]$$
+
+- B = batch size, V = voxels (연료 영역 노드 수, fuel_mask 적용 후)
+- N^{phys}: 현재 스텝 GT 값으로 ODE 적분한 결과
+- N̂: 모델 예측값
+- Bateman ODE는 **노드 로컬 방정식** (공간 결합 없음) → 셀별 독립 계산 유효
+
+### 1.10 TF2 구현 패턴
+
+```python
+import tensorflow as tf
+
+GAMMA_I  = 0.0639
+GAMMA_XE = 0.00228
+LAMBDA_I  = 2.878e-5  # s^-1
+LAMBDA_XE = 2.092e-5  # s^-1
+DT = 300.0            # 초 (5분)
+
+def bateman_analytical(N_xe, N_I, phi, sigma_a_xe, Sigma_f_total):
+    """해석해 기반 Bateman ODE 적분기 (Δt 내 phi 고정 가정)"""
+    S_I   = GAMMA_I  * Sigma_f_total * phi * 1e-24
+    S_Xe  = GAMMA_XE * Sigma_f_total * phi * 1e-24
+
+    lambda_eff = LAMBDA_XE + sigma_a_xe * phi  # Xe 유효 소멸 상수
+
+    # I-135 해석해
+    exp_I   = tf.exp(-LAMBDA_I * DT)
+    N_I_next = N_I * exp_I + (S_I / LAMBDA_I) * (1.0 - exp_I)
+
+    # Xe-135 해석해 (I-135 붕괴항 포함)
+    exp_eff = tf.exp(-lambda_eff * DT)
+    denom   = lambda_eff - LAMBDA_I + 1e-30  # 분모 0 방지
+    N_xe_next = (
+        N_xe * exp_eff
+        + (S_Xe + LAMBDA_I * N_I - S_I * LAMBDA_I / LAMBDA_I) / lambda_eff * (1.0 - exp_eff)
+        + LAMBDA_I * (N_I - S_I / LAMBDA_I) / denom * (exp_I - exp_eff)
+    )
+    return N_xe_next, N_I_next
+```
+
+---
+
+## 2. L_sigma_a_Xe — 제논 미시단면적 일관성
+
+### 2.1 MASTER 내부 σ_a^Xe 계산 메커니즘
+
+> 원본: `Xe-135 동역학...MASTER 연동.md` §3~4, 방법론 문서 34080142.pdf §10.3
+
+#### 2.1.1 이론적 정의 (원 공식)
+
+2-군 유효 미시 흡수 단면적은 에너지 스펙트럼 가중 평균으로 정의된다:
+
+$$\sigma_{a,g}^{Xe} = \frac{\int_{E \in g} \sigma_a^{Xe}(E)\,\phi(E)\,dE}{\int_{E \in g}\phi(E)\,dE} \quad \text{[Eq.4]}$$
+
+φ(E)는 온도·밀도·연소도에 따라 변동 → **원시 ENDF 핵자료를 직접 대입하려면 격자 수송 코드를 구현해야 함** (사실상 불가능).
+
+#### 2.1.2 MASTER의 실제 계산 방식: MAS_XSL Taylor 전개
+
+MASTER는 Eq.4를 직접 풀지 않고, **격자 물리 코드(KARMA, DeCART2D)가 사전 계산한 Taylor 전개 계수**를 MAS_XSL 파일에 저장한 뒤, 매 계산 시점마다 1차 Taylor 전개로 σ_a^Xe를 근사한다 (방법론 문서 34080142.pdf §10.3, MAS_XSL 매뉴얼 p.196-198):
+
+$$\sigma_a^{Xe}(B_u, T_f, \rho_m) \approx \sigma_0(B_u) + \frac{\partial\sigma}{\partial\sqrt{T_f}}\left(\sqrt{T_f}-\sqrt{T_{f,0}}\right) + \frac{\partial\sigma}{\partial\rho_m}(\rho_m - \rho_{m,0}) \quad \text{[Eq.5]}$$
+
+- σ_0, 편미분 계수: MAS_XSL 파일에 저장 (격자 물리 코드 사전 계산 결과)
+- 기준 상태(T_{f,0}, ρ_{m,0}): MAS_XSL 고정 상수 (**이전 타임스텝 값이 아님**)
+
+#### 2.1.3 스펙트럼 경화 효과 — σ_a^Xe 변동 인자
+
+| 인자 | 스펙트럼 효과 | σ_a^Xe 영향 |
+|------|-------------|-------------|
+| T_mod 상승 | 경화 (고에너지 이동) | **감소** (0.084eV 공명에서 멀어짐) |
+| ρ_mod 감소 | 감속능 저하 → 경화 | **감소** |
+| T_fuel 상승 | Doppler broadening | 간접적, 미미 |
+| Bu 증가 | FP 축적 → 경화 | 감소 경향 |
+
+→ σ_a^Xe는 **T_mod, ρ_mod에 가장 민감**. Taylor 전개의 입력 변수가 이를 반영.
+
+### 2.2 데이터 취득
+
+#### 2.2.1 MAS_NXS 출력 (학습 데이터)
+
+`%EDT_OPT inxs=1` 설정 시, MASTER가 매 시점 Taylor 전개로 산출한 σ_a^Xe를 MAS_NXS 파일에 노드별로 출력한다. **이 값은 독립적 Ground Truth가 아니라 MASTER 내부 Taylor 계산의 진단 출력**이다.
+
+**MAS_NXS 실제 컬럼명과 용도:**
+
+| 컬럼명 | 매뉴얼 명칭 | 물리량 | 단위 | 비고 |
+|--------|-----------|--------|------|------|
+| `ABS-XEN` | XSXE35 | σ_a^Xe 미시 흡수단면적 | barn | 매뉴얼에 "/cm"(거시)으로 오기. **E1/E3 삼중 검증으로 barn(미시) 확정** |
+| `DEN-XEN` | NDXE | N_Xe 수밀도 | #/barn-cm | |
+| `FIS` | XSF | Σ_f 핵분열 거시단면적 | /cm | 2군 |
+| `FLX` | — | φ 중성자속 | n/cm²/s | 2군 |
+| `FYLD-XE135` | — | γ_Xe 핵분열 수율 | 무차원 | |
+| `FYLD-I135` | — | γ_I 핵분열 수율 | 무차원 | |
+
+> **Σ_a^Xe(거시)는 MASTER에서 직접 출력 불가** (E0-e 확인: `$XS3D`의 `ABS`는 총 흡수 Σ_a^total이며 Xe 전용 아님). 필요 시 `ABS-XEN` [barn] × `DEN-XEN` [#/barn-cm] = Σ_a^Xe [/cm]로 계산.
+
+#### 2.2.2 추론 시: Taylor 전개 재현
+
+학습 데이터의 σ_a^Xe가 MASTER의 Taylor 전개 결과이므로, 추론 시에도 동일한 Taylor 전개(Eq.5)를 모델 예측 T̂_f, ρ̂_m으로 수행하면 일관성이 유지된다.
+
+- MAS_XSL에서 파싱한 Taylor 계수: HDF5 `fixed/taylor_xe35/` (§7 및 `제논 미시단면적 Taylor 계수 HDF5 스키마.md` 참조)
+- E3 검증: Taylor σ vs MAS_NXS `ABS-XEN` → g1: 0.25%, g2: 0.92% 차이
+
+### 2.3 검증 결과
+
+> 원본: `2026-03-25_sigma_a_xe_검증.md` (E0-d/e/f, E1). 상세: Appendix B 참조.
+
+#### 2.3.1 핵심 발견: N_Xe 약분
+
+Bateman ODE 소멸항에서:
+
+$$\sigma_a^{Xe} \cdot \phi \cdot N_{Xe} = \frac{\Sigma_a^{Xe}}{N_{Xe}} \cdot \phi \cdot N_{Xe} = \Sigma_a^{Xe} \cdot \phi$$
+
+→ **σ_a^Xe(미시) 역산·저장 불필요**. Σ_a^Xe(거시, MAS_NXS `ABS-XEN`×`DEN-XEN`)를 직접 사용 가능.
+
+단, **이 Loss(L_σ_a^Xe)에서 σ_a^Xe 자체가 필요하므로**, HDF5에는 σ_a^Xe [barn]으로 저장 유지.
+
+#### 2.3.2 MASTER 어셈블리 집계 (E0-d)
+
+`$XESM3D`(어셈블리) vs MAS_NXS 노드 평균: max 0.044%, mean 0.013%
+→ MASTER 내부 = **노드 단순 평균**
+
+#### 2.3.3 ABS-XEN 단위 확정 (E1)
+
+| 근거 | 결과 |
+|------|------|
+| E1-T1: ABS-XEN > XABS 전 노드 | 거시(/cm) **기각** |
+| E1-T3: σ×N 재구성 < XABS | 미시(barn) **적합** |
+| E3: MAS_XSL Taylor σ vs ABS-XEN | 0.25%/0.92% 일치 |
+| 방법론 문서 p.93: "microscopic" 명시 | barn 확인 |
+
+→ `ABS-XEN` = σ_a^Xe [barn] **3중 검증으로 최종 확정**.
+
+#### 2.3.4 Bateman Euler 전수 검증 (E1-T5)
+
+barn 가설 하에서 Euler forward 1스텝:
+
+| 항목 | 값 |
+|------|:---:|
+| 비교 노드 | 2,800개 |
+| mean |상대오차| | 1.10% |
+| max |상대오차| | 4.36% |
+| < 5% 비율 | **100%** |
+
+→ 단위가 틀렸다면 10⁸% 이상 발산 → **Euler 적분으로 단위 최종 확인**.
+
+### 2.4 손실 정의
+
+Taylor 1차 전개는 **MASTER 코드가 내부적으로 단면적을 보간하는 방법과 동일한 수학적 구조**이다 (방법론 문서 34080142.pdf §6.1~6.2, MAS_XSL 매뉴얼 p.196-198). 이 Loss는 모델의 열수력 예측값(T̂_f, ρ̂_m)으로 **MASTER와 동일한 방식으로 σ_a^Xe를 재계산**한 뒤, MASTER가 출력한 σ_a^Xe(GT)와 일관성을 검증한다.
+
+#### 2.4.1 Taylor 1차 전개 공식
+
+$$\sigma_{Taylor}(g) = \sigma_0(g) + \frac{\partial\sigma}{\partial\sqrt{T_f}}(g) \cdot \left(\sqrt{\hat{T}_f + 273.15} - \sqrt{T_{f,ref} + 273.15}\right) + \text{interp}\!\left(\frac{\partial\sigma}{\partial M}(g,:),\, \hat{\rho}_m\right) \cdot \left(\hat{\rho}_m - \rho_{m,ref}\right)$$
+
+**MAS_XSL에서 참조하는 값** (HDF5 `fixed/taylor_xe35/`에 저장):
+
+| HDF5 경로 | Shape | 물리량 | 단위 |
+|-----------|-------|--------|------|
+| `sigma_0` | (Z,qH,qW,2) | σ₀ 기준 단면적 | barn |
+| `d_sigma_dTf` | (Z,qH,qW,2) | ∂σ/∂√T_f | barn/√K |
+| `d_sigma_dP` | (Z,qH,qW,2) | ∂σ/∂PPM | barn/ppm |
+| `d_sigma_dM` | (Z,qH,qW,2,6) | ∂σ/∂ρ_m (6구간 piecewise) | barn/(g/cc) |
+| `ref_conditions` | (4,) | [REFPPM, REFTF, REFTM, REFDM] | ppm, °C, °C, g/cc |
+| `dmod_delta` | (6,) | ΔM 밀도 편차 격자 | g/cc |
+
+- T̂_f, ρ̂_m: **모델 예측값** (시점 t+1)
+- 스키마 상세: `제논 미시단면적 Taylor 계수 HDF5 스키마.md` 참조
+
+#### 2.4.2 손실 수식
+
+$$\mathcal{L}_{Taylor} = \frac{1}{B \cdot V \cdot G}\sum_{b,v,g} \left(\sigma_{Taylor,b,v}^{(g)} - \sigma_{a,b,v}^{Xe,GT,(g)}\right)^2$$
+
+- **B** = batch size (미니배치 내 샘플 수)
+- **V** = voxels (연료 영역 노드 수, fuel_mask 적용 후)
+- **G** = energy groups (G=2: fast, thermal)
+
+**핵심 차이**: L_bateman은 **GT 입력 → ODE 타겟**, L_taylor는 **모델 예측값 → Taylor 계산 → MASTER GT σ 비교**.
+
+### 2.5 TF2 구현 패턴
+
+```python
+def taylor_sigma_xe(T_f_pred, rho_m_pred, sigma0, dsigma_dTf, dsigma_dM,
+                    T_f_ref, rho_m_ref):
+    """1차 Taylor 전개 기반 sigma_a^Xe 재계산"""
+    delta_sqTf = tf.sqrt(T_f_pred + 273.15) - tf.sqrt(T_f_ref + 273.15)
+    delta_rho  = rho_m_pred - rho_m_ref
+    return sigma0 + dsigma_dTf * delta_sqTf + dsigma_dM * delta_rho
+```
+
+---
+
+## 3. L_diffusion — 확산방정식 PDE 잔차 (확장용)
+
+2군 확산방정식 잔차:
+
+$$R_g(\hat{\phi}) = -\nabla \cdot D_g \nabla\hat{\phi}_g + \Sigma_{r,g}\hat{\phi}_g - \frac{\chi_g}{k_{eff}}\sum_{g'}\nu\Sigma_{f,g'}\hat{\phi}_{g'} - \sum_{g'\neq g}\Sigma_{s,g'\to g}\hat{\phi}_{g'}$$
+
+$$\mathcal{L}_{diffusion} = \frac{1}{B \cdot V} \sum_{b,v,g} R_g(\hat{\phi})^2$$
+
+구현 시 ∇² = 유한 차분(FDM), TF2 `GradientTape` 아닌 명시적 차분 행렬 곱 (VRAM 효율).
+
+---
+
+## 4. L_keff — K-eff Rayleigh 몫 (확장용)
+
+Rayleigh 몫:
+
+$$k_{pred} = \frac{\sum_{v,g}\nu\Sigma_{f,g,v}\hat{\phi}_{g,v}^2}{\sum_{v,g}(D_g|\nabla\hat{\phi}_{g,v}|^2 + \Sigma_{a,g,v}\hat{\phi}_{g,v}^2)}$$
+
+$$\mathcal{L}_{keff} = \left(k_{pred} - k_{GT}\right)^2$$
+
+---
+
+## 5. 가중치 전략
+
+### 5.1 전체 손실 함수
+
+$$\mathcal{L}_{total} = \lambda_{rec}\mathcal{L}_{rec} + \lambda_{Bateman}\mathcal{L}_{Bateman} + \lambda_{Taylor}\mathcal{L}_{Taylor} + \lambda_{diffusion}\mathcal{L}_{diffusion} + \lambda_{keff}\mathcal{L}_{keff}$$
+
+### 5.2 Warm-up / Ramp-up 전략
+
+> 이 전략은 PINN(Physics-Informed Neural Network) 문헌에서 표준적 — Mamba 고유가 아님.
+
+**Warm-up**: 학습 초기 에폭에서 physical loss 가중치를 매우 낮게(~0.01) 설정.
+- **이유**: 모델이 아직 물리적으로 의미 있는 출력을 내지 못하는 초기 단계에서, physical loss의 gradient가 MSE loss를 방해(gradient conflict)하는 것을 방지.
+
+**Ramp-up**: Warm-up 이후 에폭마다 physical loss 가중치를 선형으로 증가시켜 목표 가중치에 도달.
+
+**Full training**: 목표 가중치로 고정하여 학습 진행.
+
+**가중치 예시** (하이퍼파라미터 튜닝 필요, 확정값 아님):
+
+| 단계 | λ_rec | λ_Bateman | λ_σXe | λ_diffusion | λ_keff |
+|------|:-----:|:---------:|:--------:|:-----------:|:------:|
+| Warm-up | 1.0 | 0.01 | 0.01 | 0 | 0 |
+| Full training (예시) | 1.0 | 0.5 | 0.3 | 0.1 | 0.1 |
+
+> **주의**: 가중치의 합이 1일 필요 없음 — 각 항의 상대적 크기 비율이 중요. 위 값은 참고용 예시이며 실제 학습에서 loss 스케일에 따라 조정 필요.
+
+### 5.3 정규화 주의
+
+N_Xe ~ 10⁻⁷ barn-cm vs φ ~ 10¹³ n/cm²/s → 7~8자릿수 차이.
+각 Loss 내부에서 물리량을 노드별 평균으로 정규화 후 계산.
+
+---
+
+## 6. 물리량-데이터 매핑 요약
+
+| Loss 항 | 필요 물리량 | MASTER 가용 | 추가 계산 |
+|---------|-----------|:-----------:|:---------:|
+| L_rec | GT 전체 필드 | ✅ | 없음 |
+| L_Bateman | N_Xe, N_I, φ(2군), Σ_f(2군), σ_a^Xe(2군), γ, λ | ✅ | ODE 적분 |
+| L_σXe | T̂_f, ρ̂_m (예측), σ_a^Xe(GT), Taylor 계수 | ✅ | 격자 라이브러리 편미분 계수 |
+| L_diffusion | φ̂(2군), D_g, Σ_a, νΣ_f, k_GT | ✅ 부분 | ∇²φ 유한차분 |
+| L_keff | φ̂, νΣ_f, D_g, Σ_a, k_GT | ✅ | Rayleigh 몫 연산 |
+
+---
+
+## 7. 구현 시 주의사항
+
+1. **수치 안정성**: Bateman 해석해에서 λ_eff ≈ λ_I (즉 σ_a^Xe·φ ≈ 0)일 때 분모 → 0. `tf.where` 또는 ε 클리핑 처리 필수.
+
+2. **2군 처리**: 흡수/생산항은 g1·φ_g1 + g2·φ_g2 합산. 별도 군이 아닌 **합산 반응률** 사용.
+
+3. **Δ 계산의 기준값**: Taylor 전개의 ΔT_m = T_m^현재 − T_{m,0}에서 T_{m,0}은 **MAS_XSL 기준 상태** (파일 고정값). 이전 타임스텝 값이 아님.
+
+4. **Mamba 연동**: Mamba SSM 자체가 선택적 상태공간 모델로 Markov ODE를 자연스럽게 표현 → Bateman ODE residual을 SSM 전이 행렬 초기화에 반영하는 방식도 고려 가능.
+
+5. **L2 vs L∞**: ODE 잔차는 L2가 기본. 국소 플럭스 피킹(power peaking) 구간에서 잔차 급증 시 gradient clipping 고려.
+
+---
+
+## Appendix A. Bateman ODE — Euler vs 해석해 오차 검증
+
+> 검증 시점: 2026-03-25 (E1-T5, E1-T5b)
+> 검증 데이터: MASTER GT (MAS_NXS s0001~s0005)
+> 결과 파일: `unit_tests/modifying_plan_phase_E/E1_T5_euler_analytic_results.txt`, `E1_T5b_multistep_results.txt`
+
+### A.1 단일 스텝 (s0001→s0002, 2800노드)
+
+| 기법 | mean |상대오차| | max |상대오차| | <1% 비율 |
+|------|:---:|:---:|:---:|
+| Euler forward | 1.1034% | 4.3632% | 55.3% (1547/2800) |
+| Analytic | 1.1017% | 4.3219% | 54.9% (1538/2800) |
+
+Analytic이 Euler보다 정확한 노드: 1370/2800 (48.9%) — **거의 반반**
+
+### A.2 연속 5스텝 (11,200 노드-스텝)
+
+| 기법 | mean | max | <1% | <5% |
+|------|:---:|:---:|:---:|:---:|
+| Euler | 0.9170% | 4.3632% | 64.5% | **100%** |
+| Analytic | 0.9068% | 4.3219% | 65.3% | **100%** |
+| Analytic+PC | 0.9052% | 4.3179% | 65.5% | **100%** |
+
+### A.3 대표 노드 비교
+
+```
+노드 (11,11,12):
+  N_Xe(t) = 2.316930E-09, N_I(t) = 5.638000E-09
+  Euler:    2.304094E-09  (오차 1.2551%)
+  Analytic: 2.304321E-09  (오차 1.2454%)
+  MASTER GT: 2.333380E-09
+```
+
+### A.4 결론
+
+1. **Euler vs Analytic 차이: mean 0.02%p, max 0.04%p** — Δt=5min에서 실질적으로 동등
+   - Δt/τ_Xe ≈ 300/47600 ≈ 0.006, 1차 절단 오차 O(Δt²) ≈ 0.09%
+2. **오차의 주요 원인은 MASTER predictor-corrector(SWPC/FWPC)** 미반영
+   - GT φ(t)만 사용하므로 MASTER 내부 φ 갱신 효과가 미반영됨
+3. **Physical Loss 적분 방법: 둘 다 허용**
+   - Euler: 단순 (1줄), 해석해: tf.exp 기반 (5줄)
+
+---
+
+## Appendix B. σ_a^Xe 검증 상세 (E0-d/e/f, E1)
+
+> 원본: `2026-03-25_sigma_a_xe_검증.md` 전체
+
+### B.1 검증 대상 4대 논점
+
+| 논점 | 내용 | 결과 |
+|------|------|------|
+| A | Bateman 소멸항 σ·φ·N = Σ·φ 약분 유효성 | ✅ 학습 시 항등, 추론 시 Σ·φ 직접 사용 가능 |
+| B | MAS_NXS ABS-XEN 단위 (barn vs /cm) | ✅ barn (미시) — E1-T1/T3/E3 삼중 검증 |
+| C | 노드→어셈블리 집계 오차 | ✅ 중앙 <0.01%, 모서리 최대 2.6% (방법1 vs 방법2) |
+| D | MASTER 내부 집계 방식 | ✅ `$XESM3D` = 노드 단순 평균 (max 0.044%) |
+
+### B.2 E0-d 결과: MASTER 어셈블리 집계
+
+`iprcon=2` + `inxs=1` 동시 실행:
+
+| 위치 | `$XESM3D` | MAS_NXS ⟨N_Xe⟩ | 차이 |
+|------|-----------|-----------------|:---:|
+| center K=12, 중앙 (5,E) | 2.317E-9 | 2.317E-9 | 0.003% |
+| center K=12, 모서리 (1,D) | 1.486E-9 | 1.486E-9 | 0.011% |
+
+전체 1140개: max 0.044%, mean 0.013%
+
+### B.3 E0-e 결과: Σ_a^Xe 어셈블리 출력 불가
+
+- `$XS3D`의 `ABS` = 총 흡수 Σ_a^total (Xe 전용 아님)
+- Σ_a^Xe는 MAS_NXS `ABS-XEN` × `DEN-XEN`으로만 산출 가능 (노드 단위)
+
+### B.4 E0-f 결론: σ_a^Xe 역산 불필요
+
+$$\sigma_a^{Xe} \cdot \phi \cdot N_{Xe} = \Sigma_a^{Xe} \cdot \phi$$
+
+N_Xe 약분 → **Bateman ODE에서 σ_a^Xe 자체 불필요** (소멸항이 N_Xe에 비의존).
+단, Taylor Loss에서는 σ_a^Xe 필요 → HDF5에 barn 단위 저장 유지.
+
+### B.5 E1 단위 확정 경로
+
+1. **E1-T1**: ABS-XEN(7.19) > XABS(0.009) → 거시 기각
+2. **E1-T3**: σ×N 재구성 → 총 흡수의 3~3.5% (g=2) → 물리적 타당
+3. **E3**: MAS_XSL Taylor σ vs ABS-XEN → 0.25%/0.92% 일치
+4. **E1-T5**: Euler forward 전수 검증 → 2800노드 100% < 5% → 단위 확정
+
+### B.6 E1-T5b 연속 5스텝
+
+| 구간 | Euler mean | Euler max | Analytic mean | Analytic max | <5% |
+|------|:---:|:---:|:---:|:---:|:---:|
+| s0001→s0002 | 1.10% | 4.36% | 1.10% | 4.32% | 100% |
+| s0002→s0003 | 0.85% | 4.16% | 0.84% | 4.12% | 100% |
+| s0003→s0004 | 0.85% | 4.19% | 0.84% | 4.15% | 100% |
+| s0004→s0005 | 0.86% | 4.22% | 0.84% | 4.18% | 100% |
+| **전체 11,200** | **0.92%** | **4.36%** | **0.91%** | **4.32%** | **100%** |
+
+3기법(Euler/Analytic/PC) 모두 ~0.9%로 수렴 → **적분법 무관 바닥 오차**. 원인: MASTER 내부 수송+열수력 재계산(PC) 미반영.
