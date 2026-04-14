@@ -1,33 +1,7 @@
-# 모델 구현 계획 — 공간 인코더 (Spatial Encoder)
+# 기존 코드(Custom Voxel Attention) 정보
 
-> **작성일**: 2026-03-30
+> **출처**: `2026-03-30 모델 구현 계획(공간 인코더).md` §1, §2에서 이관 (2026-04-02)
 > **참고 코드**: `참고 파일/custom_voxel_attention_alpha_remove_preproc_layers_250808.ipynb`
-> **접근 방식**: 기존 CustomMaxViT3D를 수정·개선하여 (20,5,5) 입력에 맞는 공간 인코더로 리팩토링
-> **전제**: 데이터셋 미생성 상태이므로 데이터 파이프라인은 후순위. 공간 인코더 모듈만 먼저 구현.
-
----
-
-## 목차
-
-1. [기존 코드 아키텍처](#1-기존-코드-아키텍처)
-   - 1.1 전체 데이터 흐름 (shape 추적)
-   - 1.2 클래스 계층
-   - 1.3 레이어별 상세
-2. [문제점 / 제거 대상](#2-문제점--제거-대상)
-   - 2.1 Prob-6 상세: relativebiastable gradient 단절
-   - 2.2 MASTER Predictor-Corrector (Full PC) 상세
-   - 2.3 Conv vs Attention 고찰: MBConv3D + AxialSE 유지 여부
-3. [기능 향상 후보](#3-기능-향상-후보)
-   - 3.1 Enh-1 상세: relativebiastable vs RoPE/STRING
-4. [수정 후 아키텍처](#4-수정-후-아키텍처)
-5. [파일 구조](#5-파일-구조)
-6. [Phase 네이밍 규칙](#6-phase-네이밍-규칙)
-7. [작업 단계 (SE)](#7-작업-단계-se)
-8. [미정 사항](#8-미정-사항)
-   - 8.1 Prob-11 상세: p_load 스칼라 처리
-   - 8.2 L_diffusion 구현 가능성
-   - 8.3 Iterative Decoder (IIET 기반 PC 루프)
-9. [검증 기준](#9-검증-기준)
 
 ---
 
@@ -270,14 +244,14 @@ CustomMaxViT3D (tf.keras.Model)
 | Prob-3 | **BoundaryPad** | 입력이 quarter symmetry(1/4 대칭)임을 가정하여 경계 반사 처리. Y/X 내측은 reflect, 외측은 zero | **우선 미사용**. 추후 대칭 모드(quarter/octant)에 따라 조건부 적용 설계 |
 | Prob-4 | **Stem3D 구조 재검토** | Conv(15,5,5)+Conv(15,3,3). Z축 커널 15는 D=24 기준 과대. **CNN이 이 역할에 최적인지 재고 필요** | 축소(3×3×3 등) 또는 대안 구조(Linear projection 등) 검토 |
 | Prob-5 | **BatchNorm 주석 처리** | BN 전부 주석 처리됨 (학습 불안정). LayerNorm 대체가 일관성 없음 | LayerNorm으로 통일 |
-| Prob-6 | **relativebiastable gradient 누락** | `build()`에서 `tf.gather_nd` 실행 → `call()` 그래프 밖 → gradient 단절 (§2.1 상세) | 단기: `tf.gather_nd`를 `call()`로 이동. 중기: 3D RoPE 대체 검토 |
+| Prob-6 | **relativebiastable gradient 누락** | `build()`에서 `tf.gather_nd` 실행 → `call()` 그래프 밖 → gradient 단절 (§2.2 상세) | 단기: `tf.gather_nd`를 `call()`로 이동. 중기: 3D RoPE 대체 검토 |
 | Prob-7 | **block_size/grid_size 비호환** | block_size=(4,2,2)는 D=26 기준. D=20에서 나눗셈 호환 재설계 필요 | Block/Grid Attention 분할 전략 재검토 (D=20, H=W=5) |
 | Prob-8 | **단일 스텝 예측 구조** | (B,D,H,W,C) 단일 시점 입력. Mamba 및 디코더 연계 필요 | 인코더는 per-timestep. 시간축은 T-Phase/SD-Phase에서 담당 |
 | Prob-9 | **출력 형태** | 기존: power map 1ch 직접 출력 | 출력을 (B,20,5,5,D_latent) embedded vector로 변경. 물리량 복원은 디코더 담당 |
 | Prob-10 | **초기화 경고** | TruncatedNormal 동일 인스턴스 재사용 → 동일 값 | seed 또는 매번 새 인스턴스 |
-| **Prob-11** | **스칼라 입출력 (중대)** | 입력: p_load(스칼라). 출력: keff, AO(스칼라). 3D 텐서와 결합/분리 방법 미정 | FiLM conditioning, spatial broadcast, 별도 헤드 등 검토 (§8) |
+| **Prob-11** | **스칼라 입출력 (중대)** | 입력: p_load(스칼라). 출력: keff, AO(스칼라). 3D 텐서와 결합/분리 방법 미정 | FiLM conditioning, spatial broadcast, 별도 헤드 등 검토 |
 
-### 2.1 Prob-6 상세: relativebiastable gradient 단절 원인
+### 2.2 Prob-6 상세: relativebiastable gradient 단절 원인
 
 **근본 원인**: `build()` 안에서 `tf.gather_nd`가 실행되어, `call()` 시점에는 frozen tensor로 취급.
 
@@ -311,7 +285,7 @@ def call(self, x):
 
 **중기**: 3D RoPE 대체 여부 — §3 Enh-1에서 논의. 기존 훈련 결과(Global MAPE 0.694%)가 위치 인코딩 없이 달성된 것이므로 gradient 복원 시 추가 개선 가능.
 
-### 2.2 MASTER Predictor-Corrector 상세
+### 2.3 MASTER Predictor-Corrector 상세
 
 > 매뉴얼 확인: **항상 Full Predictor-Corrector 사용** (idepl 파라미터 Not Working, 항상 Full PC 강제).
 > 이전 Physical Loss 레퍼런스에서 SWPC로 기술했으나, **Full PC로 정정**.
@@ -333,7 +307,7 @@ Full Predictor-Corrector는 **제논만이 아닌 전체 물리량 커플링 루
 
 > **결론**: MASTER가 항상 Full PC를 사용하므로, ~0.9% 바닥 오차는 Physical Loss 적분법 개선으로 해소 불가. **L_data(data loss)가 반드시 담당**해야 하며, L_diffusion은 공간 커플링 학습을 **보조**하는 역할.
 
-### 2.3 Conv vs Attention 고찰: MBConv3D + AxialSE 유지 여부
+### 2.4 Conv vs Attention 고찰: MBConv3D + AxialSE 유지 여부
 
 #### 제거 근거
 
@@ -370,7 +344,7 @@ Full Predictor-Corrector는 **제논만이 아닌 전체 물리량 커플링 루
    - Attention 자체가 채널 간 상호작용을 처리하므로, SE 계열은 Conv 전용 보조 모듈에 가까움
 
 3. **L_diffusion 도입 시 Conv 완전 대체 가능성**
-   - L_diffusion이 ∇²φ를 명시적으로 강제 → Conv가 학습해야 할 local 이웃 상호작용을 Loss가 직접 담당
+   - L_diffusion이 ∇²φ를 명시적으로 강제 → Conv가 학습해야 할 "local 이웃 상호작용"을 Loss가 직접 담당
    - **단, L_diffusion의 실제 도입 가능성은 검증 필요** (아래 참조)
 
 #### L_diffusion 도입 가능성 — 검증 완료 (2026-03-30)
@@ -396,264 +370,3 @@ MASTER의 NNEM = CMFD + NEM 보정. 우리는 CMFD만 재현 가능하며, NEM D
 > 1. L_diffusion 사전 검증 (piecewise-test)
 > 2. 검증 통과 시: Attention + FFN only (MBConv3D + AxialSE 전부 제거)
 > 3. 검증 실패 시: MBConv3D + Attention (AxialSE만 제거)
-
----
-
-## 3. 기능 향상 후보 (조사 기반)
-
-| # | 후보 | 현재 | 개선 | 우선순위 | 비고 |
-|---|------|------|------|:--------:|------|
-| Enh-1 | **3D RoPE / STRING** | relativebiastable | 회전 위치 인코딩 (파라미터 0, gradient 안정) | 검토 필요 | 단기 수정으로 gradient 복원 가능. RoPE는 추가 이점 검토 후 |
-| Enh-2 | **Swin3D cRSE** | 좌표 기반 bias | 다채널 신호를 PE에 통합 | 중간 | 규칙 격자이므로 효과 제한적 |
-| Enh-3 | **LocalMamba 스캔** | Block/Grid Attention O(N²) | 윈도우 선택적 스캔 O(N) | 낮음 | Mamba temporal과 별도 |
-| Enh-4 | **FlashAttention** | 표준 softmax | IO-aware 타일링 | 낮음 | TF2 직접 사용 어려움 |
-
-### 3.1 Enh-1 상세: relativebiastable vs RoPE/STRING
-
-| 특성 | relativebiastable | RoPE / STRING |
-|------|-------------------|---------------|
-| gradient | `build()` 캐시 → 단절 (수정 가능) | `call()` 내 Q·K 직접 적용 → 단절 없음 |
-| 파라미터 수 | num_heads × (2D-1)(2H-1)(2W-1) | 0 (결정론적 회전 행렬) |
-| 해상도 일반화 | D,H,W 고정 | 임의 좌표 적용 가능 |
-| 이동 불변성 | 테이블 범위 내 | 수학적으로 엄격 보장 |
-
-**물리적 관점**: attention은 절대 위치가 아닌 상대 거리 Δz,Δy,Δx에 의존해야 함 — 동일 거리 어셈블리 쌍은 위치 무관하게 유사한 중성자 결합 특성.
-
-**현재 판단**: 단기 gradient 수정으로 충분. RoPE 도입은 이점 명확 시 진행.
-
-### 조사 상세
-
-- **STRING (2025)**: Separable Translationally InvaRiaNt Position EncodinGS. Lie 지수 맵 기반 분리 가능 3D PE
-- **GeoPE (2025)**: 쿼터니언 log-exp 평균 등방성 3D 회전
-- **LieRE (2024)**: Lie 군 회전 고차원 결합 인코딩
-- **Swin3D**: cRSE — 위치·색상·법선 다채널 차이를 연속값 처리
-- **LocalMamba**: 윈도우 분할 + 선택적 스캔 + 동적 방향 탐색
-- **FlashAttention-3/4**: HBM-SRAM 타일링, FP16 740 TFLOPs/s
-
----
-
-## 4. 수정 후 아키텍처
-
-```
-Input: (B, 20, 5, 5, C_in)
-  → Stem3D (구조 검토 중, Prob-4)
-  → MaxViTBlock3D ×N_stages:
-      MBConv3D (LayerNorm 통일, AxialSE)
-      → BlockAttention3D (gradient 수정, block_size 재설계)
-      → FFN_3D
-      → GridAttention3D (gradient 수정, grid_size 재설계)
-      → FFN_3D
-  → skip connection 보존
-Output: (B, 20, 5, 5, D_latent)
-```
-
-| 항목 | 기존 | 변경 후 |
-|------|------|---------|
-| 입력 차원 | D=24 | D=20 (반사체 제외, 추후 옵션) |
-| SuperpositioningNeighborCells | 있음 (7×ch) | **제거 확정** |
-| BoundaryPad | 있음 (+2 패딩) | **우선 미사용**. 대칭 모드별 조건부 적용 |
-| Stem | Conv(15,5,5)+Conv(15,3,3) | 축소 또는 대안 구조 검토 (Prob-4) |
-| 정규화 | BN 주석 + LN 혼재 | **LayerNorm 통일** |
-| 위치 인코딩 | relativebiastable (gradient 단절) | 단기: gradient 수정. 중기: RoPE 검토 |
-| 출력 | (B,24,5,5,1) power map | (B,20,5,5,D_latent) latent vector |
-| 유지 | MBConv3D, AxialSE, Block/Grid Attention, FFN_3D | — |
-
----
-
-## 5. 파일 구조
-
-| 파일 | 위치 | 내용 |
-|------|------|------|
-| `layers3d.py` | `src/models/spatial/` | Stem3D, MBConv3D, AxialSE, FFN_3D |
-| `attention3d.py` | `src/models/spatial/` | RelativeAttention3D, BlockAttention3D, GridAttention3D |
-| `encoder3d.py` | `src/models/spatial/` | 공간 인코더 전체 조립 |
-| `__init__.py` | `src/models/spatial/` | 패키지 초기화 |
-| `model.yaml` | `configs/` | 인코더 하이퍼파라미터 |
-
----
-
-## 6. Phase 네이밍 규칙
-
-| 접두어 | 모듈 | 예시 |
-|:------:|------|------|
-| **SE** | Spatial Encoder (공간 인코더) | SE-A1, SE-B2 |
-| **T** | Temporal (시간 모델, Mamba) | T-A1, T-B1 |
-| **SD** | Spatial Decoder (공간 디코더) | SD-A1 |
-
----
-
-## 7. 작업 단계 (SE)
-
-| 단계 | 작업 | 검증 |
-|------|------|------|
-| **SE-A** | **기반 레이어 구현** | |
-| SE-A1 | `layers3d.py`: Stem3D, MBConv3D, AxialSE, FFN_3D (Prob-2~5 수정) | 각 레이어 shape 테스트 |
-| SE-A2 | `attention3d.py`: RelativeAttention3D(gradient 수정), Block/GridAttention3D (Prob-6~7) | attention shape 테스트 |
-| **SE-B** | **인코더 조립 및 검증** | |
-| SE-B1 | `encoder3d.py`: 전체 조립 (Prob-1,8,9 반영) | (B,20,5,5,C_in) → (B,20,5,5,D_latent) |
-| SE-B2 | `configs/model.yaml`: 하이퍼파라미터 정의 | — |
-| SE-B3 | gradient flow 검증 + 파라미터 수 확인 | 전 파라미터 gradient 존재 |
-| **SE-C** | **문서 갱신** | |
-| SE-C1 | `모델 구현 계획.md` Phase 순서 변경 + 본 파일 참조 | — |
-
----
-
-## 8. 미정 사항 (구현 시 결정)
-
-| 항목 | 현재 | 비고 |
-|------|------|------|
-| C_in | 미정 | xs_fuel 10ch + 기타. 데이터 파이프라인 확정 후, 일단 파라미터화 |
-| D_latent | 128 (기존) | config 조정 |
-| N_stages | 3 (기존) | config 조정 |
-| block_size / grid_size | 미정 | D=20, H=W=5 기준 재검토 (Prob-7) |
-| skip connection | 미정 | SD-Phase에서 결정 |
-| **스칼라 입출력 (Prob-11)** | **SE-Phase 미착수 → T-Phase에서 결정** | 아래 §8.1 참조 |
-| Stem 구조 | 미정 | CNN 유지 vs Linear projection (Prob-4) |
-| 위치 인코딩 | relativebiastable (gradient 수정) | RoPE 대체는 Enh-1 검토 후 |
-| BoundaryPad | 미사용 | quarter/octant 조건부 적용 설계 (Prob-3) |
-
-### 8.1 Prob-11 상세: p_load 스칼라 처리
-
-**p_load의 성격**: MASTER `EXE_STD` 카드에 입력되는 **독립적 계산 조건(쿼리)**. 입력 데이터와의 관계:
-
-| 입력 | p_load 관계 | 설명 |
-|------|:-----------:|------|
-| xs_fuel | 무관 | 순수 핵연료 물성 (BOC 고정) |
-| rod_map | 간접 | p_load에 의해 결정되지만 별개의 3D 입력 |
-| p_load | — | 스칼라. XS에도 rod_map에도 포함되지 않은 독립 조건 |
-
-**p_load가 물리 변수에 미치는 영향 경로**:
-
-| 시간 스케일 | 물리 과정 | 영향 변수 | 비고 |
-|:-----------:|----------|-----------|------|
-| 즉각 (초~분) | 제어봉 이동 → 중성자속 → 온도 피드백 | phi, T_f, rho_m, rod_map | p_load 직접 구동 |
-| 과도 (수 시간) | I-135 → Xe-135 비평형 | N_Xe, N_I, sigma_a_Xe | p_load 변화의 시간 지연 결과. Mamba 핵심 대상 |
-| 출력 | 공간 분포 + 스칼라 | power, keff, AO | p_load + Xe 과도 중첩 |
-
-**적용 위치 결론**:
-- **인코더(SE-Phase)**: p_load와 무관한 3D 물리량 압축만 담당 → **주입하지 않음**
-- **Mamba(T-Phase)** 또는 **디코더(SD-Phase)**: p_load 주입 방식(FiLM/AdaLN-Zero/concat) 및 위치를 T-Phase 설계 시 결정
-- 기존 설계(vit3d_mamba_architecture_report)에서는 Mamba 입력에 "pload conditioning: FiLM 또는 concat"으로 계획
-
-**FiLM/AdaLN-Zero 변수별 적용**:
-AdaLN-Zero의 gamma, beta는 채널별 독립 생성 → 변수별 다른 조건화 강도가 **자동 학습**됨 (예: power 채널은 강하게, Xe 채널은 약하게).
-
-**스칼라 출력 (keff, AO)**:
-디코더 3D 출력에서 global average pooling → Dense head, 또는 Mamba hidden state에서 직접 Dense head.
-
-### 8.2 L_diffusion 구현 가능성
-
-#### xs_fuel 10채널 → 확산방정식 항 유도
-
-| xs_fuel 채널 | 물리량 | 유도 가능 항 | L_diffusion 용도 |
-|:------------:|--------|------------|:----------------:|
-| [3] Σ_tr,g1 | 수송 단면적 (fast) | D_g1 = 1/(3·Σ_tr,g1) | 확산계수 |
-| [8] Σ_tr,g2 | 수송 단면적 (thermal) | D_g2 = 1/(3·Σ_tr,g2) | 확산계수 |
-| [1]+[2] Σ_f,g1 + Σ_c,g1 | 핵분열 + 포획 | Σ_a,g1 = Σ_f + Σ_c | 흡수 단면적 |
-| [6]+[7] Σ_f,g2 + Σ_c,g2 | 핵분열 + 포획 | Σ_a,g2 = Σ_f + Σ_c | 흡수 단면적 |
-| [0] νΣ_f,g1 | 핵분열 소스 (fast) | 직접 사용 | 핵분열 소스 항 |
-| [5] νΣ_f,g2 | 핵분열 소스 (thermal) | 직접 사용 | 핵분열 소스 항 |
-| [4] Σ_s,12 | fast → thermal 산란 | 직접 사용 | 군간 산란 |
-| [9] Σ_s,21 | thermal → fast 산란 | = 0 (2군 역산란 무시, 물리적 정상) | 무시 |
-
-**추가 필요 물리량**:
-- χ_g = [1.0, 0.0]: 2군 표준 가정, 하드코딩
-- k_eff: HDF5 `result_keff` (T,31)에서 사용
-- φ_g: HDF5 `critical_flux` (T,Z,qH,qW,2)에서 사용
-
-→ **xs_fuel 10채널 + HDF5 시계열 데이터로 L_diffusion 계산에 필요한 모든 항 충족**
-
-#### 누설 계산: CMFD 체적 적분 방식
-
-> 방법론 §2.1.4: MASTER의 NNEM = CMFD(전역 커플링) + NEM(국소 고차 보정) 반복.
-> L_diffusion에서는 CMFD 부분만 재현.
-
-면 중성자류: `J = D̃ × (φ_이웃 - φ_중심)`, D̃ = 계면 조화평균/h (방법론 Eq. 2.1-37)
-체적 적분 잔차: `R = 6면 순 누설 + 소멸×V - 소스×V`
-
-Inner-only 평가: 경계 노드 제외 → albedo 조건 불필요. 추후 반사체 단면적 추출 시 확장.
-
-#### 사전 검증 결과 (2026-03-30)
-
-CMFD 체적 적분 잔차, 2 LP × CRS+Branch, 5760 유효 노드:
-- g1 median **3.50%** (MARGINAL), g2 median **6.99%** (ACCEPTABLE)
-- 잔차 원인: NEM 보정(D̂) 미포함 (방법론 Eq. 2.1-38)
-- **L_diffusion을 공간 커플링 보조 gradient 신호로 도입 가능**
-
-상세: `모델 구현 계획(통합).md` §8.5, `Physical Loss 통합 레퍼런스.md` §3 참조
-
-### 8.3 Iterative Decoder — IIET 기반 Predictor-Corrector 루프
-
-> 참고 논문: IIET (2509.22463v2, EMNLP 2025). 적용 Phase: **SD-Phase** (SE-Phase 범위 밖).
-
-#### 배경: ~0.9% 바닥 오차와 MASTER Full PC
-
-MASTER Full PC는 출력 물리량(φ, T_f, ρ_m, σ, N_Xe)을 **커플링 루프로 재계산**. 우리 모델은 1회 예측만 수행하여 이 커플링이 없음 → ~0.9% 바닥 오차. L_data가 이 간극을 담당하지만, **디코더 내부에서 self-consistent refinement**를 수행하면 모델 자체가 커플링을 학습할 수 있음.
-
-#### IIET 방식 (PCformer 대비 개선)
-
-| | PCformer (Explicit PC) | IIET (Implicit Iterative Euler) |
-|---|---|---|
-| 반복 구조 | Predictor ≠ Corrector (비대칭) | **동일 블록 r회 반복** (대칭, 가중치 공유) |
-| 오차 전파 | pred_1 오류 → corrector 오염 | iteration이 self-correct |
-| 파라미터 | 증가 가능 | **증가 없음** |
-| 필수 조건 | — | 각 iteration 전 **LayerNorm (RK-Norm)** 필수 |
-
-```
-IIET 수식:
-  y^0_{n+1} = y_n + h·f(y_n)              ← 초기 예측 (Explicit Euler)
-  y^i_{n+1} = y_n + h·f(y^{i-1}_{n+1})    ← i=1..r 반복 (Fixed-point iteration)
-```
-
-#### 우리 모델에의 적용
-
-```
-[인코더] state(t) → latent           (1회)
-[Mamba]  latent sequence → h(t)       (1회)
-[디코더] h(t) → pred^0               (초기 예측)
-         h(t) + LayerNorm(pred^0) → pred^1    (iteration 1)
-         h(t) + LayerNorm(pred^1) → pred^2    (iteration 2)
-         pred^r = 최종 출력
-```
-
-인코더/Mamba는 1회만 실행, **디코더 블록만 r+1회 반복** (가중치 공유).
-
-#### 구현 스케치
-
-```python
-class IterativeDecoder3D(Layer):
-    def __init__(self, decoder_block, r_iterations=2, **kwargs):
-        super().__init__(**kwargs)
-        self.decoder_block = decoder_block  # 가중치 공유
-        self.r = r_iterations
-        self.rk_norms = [LayerNormalization() for _ in range(r_iterations)]
-
-    def call(self, h_t, training=None):
-        pred = self.decoder_block(h_t, training=training)       # pred^0
-        for i in range(self.r):
-            normed = self.rk_norms[i](pred)                     # RK-Norm 필수
-            pred = self.decoder_block(h_t + normed, training=training)  # pred^i
-        return pred
-```
-
-#### Physical Loss와의 관계
-
-모든 Loss는 **최종 pred^r에 적용** — 변경 없음. iteration이 물리량 간 self-consistency를 개선하므로 L_Bateman, L_sigma_a_Xe, L_diffusion 잔차가 감소할 것으로 기대.
-
-#### 잠재적 문제
-
-| # | 문제 | 대응 |
-|---|------|------|
-| 1 | 학습 실패 (RK-Norm 누락) | 각 iteration 전 LayerNorm **필수** |
-| 2 | Gradient vanishing | 초기: `tf.stop_gradient(pred^0)`, 수렴 후 개방 |
-| 3 | 추론 오버헤드 (~r+1배) | 초기 r=1, 수렴 후 r=2 |
-| 4 | Fixed-point 발산 | 잔차 모니터링 + 조기 종료 |
-
----
-
-## 9. 검증 기준
-
-1. import: `from src.models.spatial import SpatialEncoder3D`
-2. forward pass: dummy `(2, 20, 5, 5, 16)` → `(2, 20, 5, 5, D_latent)` shape
-3. gradient flow: 전 파라미터 gradient 존재 (relativebiastable 포함)
-4. 파라미터 수 확인
