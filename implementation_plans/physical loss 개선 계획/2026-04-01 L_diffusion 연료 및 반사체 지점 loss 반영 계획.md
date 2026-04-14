@@ -1,7 +1,27 @@
 # L_diffusion 연료 및 반사체 인접면 loss 반영 계획
 
 **작성일**: 2026-04-01
-**참조**: Physical Loss 통합 레퍼런스 §3, Albedo 캘리브레이션 종합 보고서 (확정)
+**개정**: 2026-04-08 — 손실 형식을 절대 잔차 → **상대 잔차 (L_diff_rel)** 로 전환. 자세한 근거: `2026-03-30 Physical Loss 통합 레퍼런스.md` §3.6
+**참조**: Physical Loss 통합 레퍼런스 §3, Albedo 캘리브레이션 종합 보고서 (확정), `05_symmetry_mode.md`, ML 검토 plan `C:\Users\Administrator\.claude\plans\compressed-wandering-stroustrup.md`
+
+---
+
+## 0. 개정 요약 (2026-04-08)
+
+본 plan은 다음 변경사항을 반영하여 갱신됨:
+
+1. **손실 형식 변경**: `‖R(φ_pred)‖²` (절대 잔차) → `‖R(φ_pred) − R(φ_GT)‖²` (상대 잔차, L_diff_rel)
+   - CMFD-only의 g2 ~6.4% bias floor를 양변에서 cancel
+   - target이 0이 아닌 사전 계산된 ε_total(t) = R(φ_GT, xs_BOC)
+2. **본 plan의 boundary_mask, Albedo BC, trainable α/C는 모두 그대로 유지**:
+   - R 연산자는 변하지 않음 (양변에 동일하게 적용)
+   - α/C 학습 가능 파라미터의 backward chain은 R 연산자를 통해 그대로 작동
+   - Albedo BC 학습 가치는 오히려 강화됨 (절대 잔차 bias 제거 후 신호가 더 선명)
+3. **추가 손실 항 (별도 plan)**:
+   - L_data_halo (λ=0.3): halo cell에 직접 supervision (`05_symmetry_mode.md` §3.1)
+4. **Optimization 보조 옵션 (선택)**:
+   - 옵션 A: rod-aware Σ_a 학습 가능 보정
+   - 옵션 B: rod cell L_diff 가중치 감쇠 `weight = exp(−β·rod_frac)`
 
 ---
 
@@ -9,7 +29,7 @@
 
 L_diffusion은 모델 예측 flux가 확산방정식의 **공간 밸런스**를 만족하는지 검사:
 ```
-R_g = [6면 누설] + [제거 × V] - [생성 × V] = 0 (이상적)
+R_g = [6면 누설] + [제거 × V] - [생성 × V] = 0 (이상적, NEM 한계 무시)
 ```
 
 각 연료 노드의 6면은 이웃에 따라 **누설 계산 방식이 다름**:
@@ -115,16 +135,47 @@ C_top    = tf.Variable([[+0.174, -0.097],    # R²=(0.993, 0.925)
 
 ## 4. Loss 계산 흐름
 
-### 의사코드
+### 4.0 개정 후 손실 정의 (상대 잔차 L_diff_rel)
+
+**용어 정리**:
+- **R**: 본 §3 의 잔차 연산자. 함수 `compute_R(phi, xs_fuel, keff, boundary_mask, alpha_ortho, alpha_diag, C_bottom, C_top)` 가 한 cell의 6면 누설을 boundary_mask에 따라 분기 처리하여 잔차 R_g1, R_g2를 계산한다 (이하 §4 의사코드 본문)
+- **α, C**: §3 에서 정의된 학습 가능 Albedo BC 파라미터 12개 (`alpha_ortho_g1/g2`, `alpha_diag_g1/g2`, `C_bottom`, `C_top`). R 연산자 안의 face_type 1~4 분기에서 사용
+- **L_diff_rel**: R 연산자를 사용한 손실의 상대 잔차 형식. 절대 잔차 `‖R(φ_pred)‖²`를 `‖R(φ_pred) − R(φ_GT)‖²`로 교체
+
+**손실 계산 흐름**:
+```python
+# 매 학습 step:
+R_pred = compute_R(phi_pred, xs_fuel, keff, boundary_mask,
+                   alpha_ortho, alpha_diag, C_bottom, C_top)
+R_GT   = compute_R(phi_GT,   xs_fuel, keff, boundary_mask,
+                   alpha_ortho, alpha_diag, C_bottom, C_top)
+L_diff_rel = mean((R_pred - R_GT)**2)
+```
+
+- R_pred와 R_GT는 **완전히 동일한 R 연산자**로 계산. 입력 phi만 다름
+- α, C가 학습 가능이므로 두 R 모두 같은 α, C 값을 사용 → α/C에 정상 gradient 전달
+- 비용: forward 시 R 호출 2회 (R 자체가 가벼워 무시 가능)
+
+**사전 계산 가능성**:
+- α, C가 *학습 도중 변하므로* R(φ_GT)를 학습 시작 전에 한 번 사전 계산해 둘 수는 없음
+- 단 **α, C가 학습 진행에 따라 거의 변하지 않는 안정 단계** 진입 후에는 R(φ_GT)를 cache 가능 (성능 최적화 옵션, 본 plan 범위 외)
+- 만약 α, C 를 사전 calibration된 값으로 fix하기로 결정하면, R(φ_GT)는 Phase G 전처리에서 1회 계산해 HDF5 저장 가능
+
+### 의사코드 (R 연산자 본체, 절대 잔차 form 그대로 보관)
+
+R 연산자 자체는 절대 잔차 시절과 동일. L_diff_rel은 R 호출을 두 번 (φ_pred, φ_GT) 한 후 차분을 취할 뿐이므로 본 함수는 그대로 재사용.
 
 ```python
-def compute_L_diffusion(phi_pred, xs_fuel, keff, boundary_mask,
-                        alpha_ortho, alpha_diag, C_bottom, C_top):
+def compute_R(phi, xs_fuel, keff, boundary_mask,
+              alpha_ortho, alpha_diag, C_bottom, C_top):
     """
-    phi_pred: (B, 2, 20, 5, 5) — 모델 예측 flux [g1, g2]
-    xs_fuel:  (20, 5, 5, 10) — 거시단면적 (고정)
+    phi:      (B, 2, 20, 5, 5) — flux [g1, g2] (φ_pred 또는 φ_GT)
+    xs_fuel:  (20, 5, 5, 10) — 거시단면적 (BOC 고정)
     keff:     (B,) — GT keff
     boundary_mask: (20, 5, 5, 6) — 면 유형 코드 (사전 생성, 고정)
+    
+    Returns:
+        R_g1, R_g2: (B, 20, 5, 5) — 노드별 잔차
     """
     D_g1 = 1 / (3 * xs_fuel[..., 3])   # 확산계수 g1
     D_g2 = 1 / (3 * xs_fuel[..., 8])   # 확산계수 g2
@@ -167,12 +218,15 @@ def compute_L_diffusion(phi_pred, xs_fuel, keff, boundary_mask,
                 leak_g2 += D_harm*(phi_nb_g2-phi_g2)/h * A
 
         # 밸런스 잔차
-        R_g1 = leak_g1 + Sigma_r1*phi_g1*V - (1/keff)*fission_src*V
-        R_g2 = leak_g2 + Sigma_a2*phi_g2*V - Sigma_s12*phi_g1*V
+        R_g1[z, y, x] = leak_g1 + Sigma_r1*phi_g1*V - (1/keff)*fission_src*V
+        R_g2[z, y, x] = leak_g2 + Sigma_a2*phi_g2*V - Sigma_s12*phi_g1*V
 
-        total_loss += R_g1**2 + R_g2**2
+    return R_g1, R_g2   # (B, 20, 5, 5) 각각
 
-    return total_loss / (B * N_fuel)
+# L_diff_rel 호출:
+R_pred_g1, R_pred_g2 = compute_R(phi_pred, ...)
+R_GT_g1,   R_GT_g2   = compute_R(phi_GT,   ...)
+L_diff_rel = mean((R_pred_g1 - R_GT_g1)**2 + (R_pred_g2 - R_GT_g2)**2)
 ```
 
 ### TF2 벡터화 구현 참고
@@ -198,11 +252,17 @@ total_leak = leak_cmfd + leak_ortho + leak_diag + leak_bottom + leak_top
 ## 5. 검증 계획
 
 1. **boundary_mask 검증**: R4 boundary verification 맵과 일치 확인
-2. **GT flux 잔차**: GT flux로 L_diffusion 계산 시 기존 결과와 비교
+2. **GT flux 잔차** (절대 잔차 R(φ_GT) 자체의 분포): 기존 결과와 비교
    - 내부 노드만 (기존): g1 2.3%, g2 7.5%
    - 전체 연료 (Albedo BC 포함): 유사하거나 개선 기대
-3. **trainable 수렴**: 학습 후 α/C가 캘리브레이션 초기값 근처 유지 확인
-4. **gradient 전파**: 경계 연료 노드의 flux에 실제 gradient 제공 확인
+   - 이 잔차가 곧 ε_total(t)이며, L_diff_rel의 target이 됨
+3. **L_diff_rel 자체 검증**: 학습 시작 시점에서 R(φ_pred) ≈ R(φ_GT) 인 경우 (e.g. φ_pred = φ_GT) L_diff_rel ≈ 0 인지 확인
+4. **trainable 수렴**: 학습 후 α/C가 캘리브레이션 초기값 근처 유지 확인
+5. **gradient 전파**: 
+   - 경계 연료 노드의 flux에 실제 gradient 제공 확인
+   - α/C 파라미터에도 gradient 전달 확인 (R(φ_pred), R(φ_GT) 양쪽 chain에서)
+6. **상대 vs 절대 ablation**: 동일 모델을 절대 잔차 / 상대 잔차로 학습하여 inner cell phi MSE 비교
+   - 예측: 상대 잔차가 동등 또는 약간 우수, bias floor 영역에서 큰 차이
 
 ---
 
@@ -211,6 +271,9 @@ total_leak = leak_cmfd + leak_ortho + leak_diag + leak_bottom + leak_top
 | 파일 | 역할 |
 |------|------|
 | `Physical Loss 통합 레퍼런스 §3.5` | Albedo BC 공식 + 확정값 |
+| `Physical Loss 통합 레퍼런스 §3.6` | **L_diff_rel 형식 + redundancy 분석 + Consistency Barrier 참조 (개정 2026-04-08)** |
 | `Albedo 캘리브레이션 종합 보고서 (확정).md` | R4 확정값 + 물리적 해석 |
 | `JNET0 N-S 매핑 오류 발견 및 해결.md` | 좌표 매핑 (J↑=남쪽) |
 | `R4 boundary verification` | 경계면 위치 + 맵 검증 |
+| `05_symmetry_mode.md` §3.4 | halo cell의 L_diff_rel 사용 (디코더 (6,6) 출력 그대로) |
+| `compressed-wandering-stroustrup.md` | ML 위협 검토 plan (권고 1, 7, 옵션 A/B) |
