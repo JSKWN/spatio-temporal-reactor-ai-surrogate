@@ -30,14 +30,16 @@
 - **Gradient flow**: Pre-Norm 의 residual stream 이 gradient 를 layer 전체에 안정적으로 전달
 - **TF2.14 Keras 호환**: `tf.keras.layers.LayerNorm` 으로 직접 사용 가능, 추가 구현 불필요
 
-### 1.4. 인코더 vs 디코더 분리
+### 1.4. 인코더 vs Mamba vs 디코더 — p_load 주입 분리
 
-- **인코더**: 일반 Pre-LN (조건 변조 없음). 입력 조건 (state, xs_fuel, rod_map) 은 채널 concat 으로 직접 투입
-- **디코더**: **AdaLN-Zero Pre-LN** — p_load (스칼라 조건) 로 LayerNorm 의 γ, β 를 변조. DiT (Peebles & Xie, 2023 "Scalable Diffusion Models with Transformers") 패턴
-  - 인코더에 p_load 를 FiLM 으로 주입하지 않는 이유: p_load 는 *다음 시점의 출력* 을 조건부로 만드는 조건이지 *현재 상태의 공간 압축* 에는 무관. 인코더 역할은 "state(t) + rod_map(t+1) + xs_fuel → 전이 정보 추출" 이며 p_load 는 디코더/Mamba 에서 적용
+- **인코더**: 일반 Pre-LN (p_load 미주입). 입력 조건 (state, xs_fuel, rod_map) 은 채널 concat 으로 직접 투입. 인코더 역할은 "state(t) + rod_map(t+1) + xs_fuel → 전이 정보의 공간 추출"이며, p_load는 공간 압축과 무관
+- **Mamba (시계열 모델)**: **p_load 주입** — 시간 변화율 (온도 상승률, Xe 생성/소멸 속도) 이 p_load에 직접 의존하므로, Mamba가 p_load를 알아야 정확한 상태 전이 예측이 가능. DreamerV3의 RSSM에서 action이 GRU 입력에 concat되는 것과 동일한 원리
+- **디코더**: **AdaLN-Zero Pre-LN** — p_load (스칼라 조건) 로 LayerNorm 의 γ, β 를 변조. 출력 복원 시 추가 regime 정보 제공
 - 디코더의 AdaLN-Zero 상세는 SD-Phase (공간 디코더) plan 에서 결정 (본 문서 범위 외)
 
-상세: `2026-04-04 정밀도 및 경량화 검토.md` §5, `2026-03-30 모델 구현 계획(공간 인코더).md` line 334-337
+> **2026-04-15 수정**: 기존 "디코더 전용 p_load 주입" → "Mamba + 디코더 주입"으로 변경. Mamba가 p_load 없이 상태 전이를 수행하면, 출력 수준에 따른 동역학 차이를 반영할 수 없음 (Dreamer/SHRED 등 시계열 물리 모델의 공통 패턴). 상세: `시계열모델(SSM) 구현 계획/2026-04-15 p_load 주입 전략 재검토.md`
+
+상세: `2026-04-04 정밀도 및 경량화 검토.md` §5, `2026-03-30 모델 구현 계획(공간 인코더).md` p_load 섹션
 
 ---
 

@@ -26,7 +26,7 @@
     이후 학습 가능 변수로 fine-tuning. base = 10000 (RoPE 표준).
 
 (2) FullAttention3D
-    - (B, N, D) flat sequence input. 본 인코더에서는 N = Z·qH·qW = 500.
+    - (B, N, D) flat sequence input. 본 인코더에서는 N = Z·qH·qW (halo expand 후 720 = 20·6·6).
     - Multi-head: D -> num_heads × head_dim, head별 attention 후 concat -> output proj.
     - STRING은 Q, K에만 적용 (V는 회전 안 받음). Attention score = softmax(Q'·K'^T / sqrt(d)).
     - QK-Norm은 미적용 (사용자 결정 2026-04-08, 학습 안정성 이슈 발생 시 재검토).
@@ -203,7 +203,7 @@ class FullAttention3D(layers.Layer):
     """Multi-head full attention with STRING (Q, K rotated by relative position).
 
     입력: (B, N, D) flat sequence
-        - 본 인코더에서 N = Z·qH·qW = 500
+        - 본 인코더에서 N = Z·qH·qW (halo expand 후 720 = 20·6·6)
         - 호출자가 사전에 (B, Z, qH, qW, D)에서 reshape 필요
     추가 입력: coords (N, 3) — 정규화 물리 좌표
 

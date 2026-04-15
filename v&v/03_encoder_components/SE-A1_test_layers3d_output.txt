@@ -1,0 +1,21 @@
+2026-04-15 11:33:15.660934: I tensorflow/core/platform/cpu_feature_guard.cc:182] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: SSE SSE2 SSE3 SSE4.1 SSE4.2 AVX AVX2 AVX512F AVX512_VNNI AVX512_BF16 AVX_VNNI FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+======================================================================
+SE-A1 V&V — layers3d.py (CellEmbedder, FFN3D, LearnedAbsolutePE3D)
+Grid: (Z=20, qH=6, qW=6), N=720, C_in=21, D=128
+======================================================================
+
+--- G1: Shape 검증 ---
+  CellEmbedder: (2, 20, 6, 6, 21) → (2, 20, 6, 6, 128)  PASS
+  LearnedAbsolutePE3D: (2, 20, 6, 6, 128) → (2, 20, 6, 6, 128)  PASS
+  FFN3D: (2, 720, 128) → (2, 720, 128)  PASS
+  get_norm_map(): shape=(20, 6, 6), dtype=<dtype: 'float32'>  PASS
+
+--- G2: Parameter Count ---
+  CellEmbedder: 측정=2,816, 수식=2,816  PASS
+  LearnedAbsolutePE3D: 측정=92,160, 수식=92,160  PASS
+  FFN3D (expand=4): 측정=131,712, 수식=131,712  PASS
+
+======================================================================
+SE-A1 V&V 결과: ALL PASS
+======================================================================

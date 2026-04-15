@@ -1,9 +1,10 @@
 """공간 인코더 기본 layer 모듈 (SE-A1).
 
-세 클래스:
+네 클래스:
     CellEmbedder          — Conv3D(1,1,1) per-cell channel projection (C_in -> D)
     FFN3D                 — Pre-LN block의 token-wise 비선형 feed-forward (D -> D*r -> D)
     LearnedAbsolutePE3D   — (Z, qH, qW, D) trainable absolute position embedding
+    ConditionalLAPE3D     — 대칭 유형별 조건부 LAPE (mirror/rotation 2개 텐서, sym_type 분기)
 
 설계 결정 (2026-04-08, plan: breezy-herding-meadow.md):
 
@@ -229,6 +230,122 @@ class LearnedAbsolutePE3D(layers.Layer):
             np.save("lape_norm_map.npy", norm_map)
         """
         return tf.norm(self.embedding, axis=-1)
+
+    def get_config(self):
+        config = super().get_config()
+        config.update(
+            {
+                "z_dim": self.z_dim,
+                "qh_dim": self.qh_dim,
+                "qw_dim": self.qw_dim,
+                "d_latent": self.d_latent,
+                "init_scale": self.init_scale,
+            }
+        )
+        return config
+
+
+class ConditionalLAPE3D(layers.Layer):
+    """대칭 유형별 조건부 3D 절대 위치 임베딩.
+
+    mirror / rotation 두 개의 trainable 텐서를 보유하고,
+    sym_type (0=mirror, 1=rotation) 에 따라 하나를 선택하여 입력에 add.
+    BERT의 segment embedding과 동일 원리 (2-class 조건부 위치 임베딩 분기).
+
+    각 텐서의 형상: (Z, qH, qW, D).
+        예: (20, 6, 6, 128) → 720개 cell × 128차원 = 92,160개 학습 가능 스칼라.
+        두 테이블 합계: 184,320개.
+
+    Gradient 흐름:
+        tf.where에 의해 선택된 텐서만 계산 그래프에 포함된다.
+        선택된 텐서에는 모든 물리량 loss (L_data, L_data_halo, L_diff_rel 등)
+        의 gradient가 흐른다. 선택되지 않은 텐서는 gradient = 0.
+
+    설계 근거: 2026-04-14 Conditional LAPE 적용 검토.md
+
+    Args:
+        z_dim:        Z 격자 크기 (예: 20)
+        qh_dim:       quarter H 격자 크기 (예: 6, halo 포함)
+        qw_dim:       quarter W 격자 크기 (예: 6, halo 포함)
+        d_latent:     임베딩 차원 D (예: 128)
+        init_scale:   RandomNormal stddev (기본 0.02, ViT 표준)
+    """
+
+    def __init__(
+        self,
+        z_dim: int,
+        qh_dim: int,
+        qw_dim: int,
+        d_latent: int,
+        init_scale: float = 0.02,
+        name: str = "cond_lape3d",
+        **kwargs,
+    ):
+        super().__init__(name=name, **kwargs)
+        self.z_dim = z_dim
+        self.qh_dim = qh_dim
+        self.qw_dim = qw_dim
+        self.d_latent = d_latent
+        self.init_scale = init_scale
+
+    def build(self, input_shape):
+        shape = (self.z_dim, self.qh_dim, self.qw_dim, self.d_latent)
+
+        # 각 테이블에 다른 seed를 부여하여 초기값이 다르게 생성되도록 함.
+        # Keras의 unseeded RandomNormal은 동일 build() 내에서 동일 값을 반환하는 문제가 있음.
+        self.lape_mirror = self.add_weight(
+            name="lape_mirror",
+            shape=shape,
+            initializer=tf.keras.initializers.RandomNormal(
+                mean=0.0, stddev=self.init_scale, seed=42
+            ),
+            trainable=True,
+        )
+        self.lape_rotation = self.add_weight(
+            name="lape_rotation",
+            shape=shape,
+            initializer=tf.keras.initializers.RandomNormal(
+                mean=0.0, stddev=self.init_scale, seed=137
+            ),
+            trainable=True,
+        )
+        super().build(input_shape)
+
+    def call(self, x: tf.Tensor, sym_type: tf.Tensor) -> tf.Tensor:
+        """입력에 대칭 유형별 위치 임베딩을 add.
+
+        Args:
+            x:        (B, Z, qH, qW, D) — CellEmbedder 출력.
+            sym_type: (B,) int32 — 0=mirror, 1=rotation.
+
+        Returns:
+            (B, Z, qH, qW, D) — 위치 임베딩이 더해진 텐서.
+        """
+        # sym_type (B,) → (B, 1, 1, 1, 1) 로 확장하여 broadcasting
+        cond = tf.equal(sym_type[:, tf.newaxis, tf.newaxis, tf.newaxis, tf.newaxis], 0)
+        lape = tf.where(
+            cond,
+            self.lape_mirror[tf.newaxis, ...],
+            self.lape_rotation[tf.newaxis, ...],
+        )
+        return x + lape
+
+    def get_norm_map(self) -> dict:
+        """대칭 유형별 위치 L2 노름 맵 — 학습 종료 후 분석용.
+
+        Returns:
+            dict with keys 'mirror', 'rotation'.
+            각 값은 tf.Tensor of shape (Z, qH, qW), dtype float32.
+
+        Usage:
+            norms = encoder.cond_lape.get_norm_map()
+            mirror_map = norms['mirror'].numpy()   # (20, 6, 6)
+            rot_map = norms['rotation'].numpy()     # (20, 6, 6)
+        """
+        return {
+            "mirror": tf.norm(self.lape_mirror, axis=-1),
+            "rotation": tf.norm(self.lape_rotation, axis=-1),
+        }
 
     def get_config(self):
         config = super().get_config()

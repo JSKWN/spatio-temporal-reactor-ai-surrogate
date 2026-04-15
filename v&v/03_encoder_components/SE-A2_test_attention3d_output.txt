@@ -1,0 +1,32 @@
+2026-04-15 11:35:10.186198: I tensorflow/core/platform/cpu_feature_guard.cc:182] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: SSE SSE2 SSE3 SSE4.1 SSE4.2 AVX AVX2 AVX512F AVX512_VNNI AVX512_BF16 AVX_VNNI FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+======================================================================
+SE-A2 V&V — attention3d.py (STRINGRelativePE3D, FullAttention3D)
+Grid: (Z=20, qH=6, qW=6), N=720, D=128, H=4
+======================================================================
+
+--- STRINGRelativePE3D ---
+  G1 q_rot shape: (2, 4, 720, 32)  PASS
+  G1 k_rot shape: (2, 4, 720, 32)  PASS
+  G2 params: 192 (expected 192)  PASS
+
+--- L2 Norm Preservation ---
+  max|norm(q) - norm(q_rot)| = 9.54e-07  PASS
+
+--- Translation Invariance ---
+  max|y - y_shifted| = 2.68e-07  PASS
+
+--- FullAttention3D ---
+  G1 output shape: (2, 720, 128)  PASS
+  G2 params: 66,240 (expected 66,240)  PASS
+
+--- Coords Validation ---
+  coords shape: (720, 3)  PASS
+  coords range: [0.00, 1.00]  PASS
+  Z step: 0.0526 (expected 0.0526)
+  Y step: 0.2000 (expected 0.2000)
+  Step ratio reflects physics pitch: PASS
+
+======================================================================
+SE-A2 V&V: ALL PASS
+======================================================================

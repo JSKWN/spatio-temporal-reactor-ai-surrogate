@@ -1,0 +1,39 @@
+2026-04-15 11:43:10.451861: I tensorflow/core/platform/cpu_feature_guard.cc:182] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: SSE SSE2 SSE3 SSE4.1 SSE4.2 AVX AVX2 AVX512F AVX512_VNNI AVX512_BF16 AVX_VNNI FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+======================================================================
+SE-B3 V&V — Gradient Flow + Domain Threats
+======================================================================
+
+--- G3: Gradient Flow ---
+  All variables have gradient (rotation LAPE excluded as expected)
+  Gradient norm range: [6.07e-04, 3.99e+00]
+  No vanishing (min > 1e-12): PASS
+  No exploding (max < 1e6): PASS
+
+  Smallest gradient norms:
+    bias:0: 6.07e-04
+    bias:0: 1.12e-03
+    bias:0: 1.43e-03
+  Largest gradient norms:
+    kernel:0: 3.04e+00
+    kernel:0: 3.51e+00
+    kernel:0: 3.99e+00
+
+--- G4: Dead Activation (GELU) ---
+  Stage 0: GELU zero ratio = 0.0% (60/737280)  PASS
+  Stage 1: GELU zero ratio = 0.0% (48/737280)  PASS
+  Stage 2: GELU zero ratio = 0.0% (45/737280)  PASS
+
+--- G5: Numerical Stability ---
+  Normal input: NaN=False, Inf=False  PASS
+  Large input (x10): NaN=False, Inf=False  PASS
+  Zero input: NaN=False, Inf=False  PASS
+
+--- D3: Halo Attention Bias ---
+  Avg attention received — halo: 0.001395, inner: 0.001386
+  Ratio (halo/inner): 1.0064
+  Halo not dominating (ratio < 3.0): PASS
+
+======================================================================
+SE-B3 V&V: ALL PASS
+======================================================================

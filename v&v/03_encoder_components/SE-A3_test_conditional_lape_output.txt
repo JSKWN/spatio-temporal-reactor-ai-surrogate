@@ -1,0 +1,49 @@
+2026-04-15 11:36:57.622993: I tensorflow/core/platform/cpu_feature_guard.cc:182] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: SSE SSE2 SSE3 SSE4.1 SSE4.2 AVX AVX2 AVX512F AVX512_VNNI AVX512_BF16 AVX_VNNI FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+======================================================================
+SE-A3 V&V — ConditionalLAPE3D
+Grid: (Z=20, qH=6, qW=6), D=128
+======================================================================
+
+--- G1: Shape ---
+  sym=[0,0]: (2, 20, 6, 6, 128) -> (2, 20, 6, 6, 128)  PASS
+  sym=[1,1]: (2, 20, 6, 6, 128) -> (2, 20, 6, 6, 128)  PASS
+
+--- G2: Parameter Count ---
+  params: 184,320 (expected 184,320)  PASS
+
+--- C6: Table Selection ---
+  sym=0 vs sym=1 output differs: PASS
+
+--- C7: Gradient Isolation ---
+  sym=0: cond_lape3d/lape_mirror:0 gradient exists: PASS
+  sym=0: cond_lape3d/lape_rotation:0 gradient = 0: PASS
+  sym=1: cond_lape3d/lape_mirror:0 gradient = 0: PASS
+  sym=1: cond_lape3d/lape_rotation:0 gradient exists: PASS
+
+--- C8: Per-sample Selection ---
+  sample 0 (sym=0) matches mirror: PASS
+  sample 1 (sym=1) matches rotation: PASS
+
+--- C9: get_norm_map() ---
+  keys: ['mirror', 'rotation']  PASS
+  mirror shape: (20, 6, 6)  PASS
+  rotation shape: (20, 6, 6)  PASS
+  dtype: float32  PASS
+
+--- D1: Conditional LAPE Effect ---
+  L2(mirror_out - rotation_out) = 12.1268
+  L2(mirror_out) = 428.6380
+  ratio = 0.0283
+  LAPE not ignored (ratio > 0.1%): PASS
+
+--- D2: LAPE Scale vs CellEmbedder Scale ---
+  CellEmbedder output std: 1.4170
+  LAPE mirror std: 0.0200
+  LAPE rotation std: 0.0199
+  scale ratio (LAPE/CellEmb): 0.0141
+  LAPE does not dominate (ratio < 10x): PASS
+
+======================================================================
+SE-A3 V&V: ALL PASS
+======================================================================

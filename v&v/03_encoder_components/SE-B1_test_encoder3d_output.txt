@@ -1,0 +1,34 @@
+2026-04-15 11:42:16.572147: I tensorflow/core/platform/cpu_feature_guard.cc:182] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: SSE SSE2 SSE3 SSE4.1 SSE4.2 AVX AVX2 AVX512F AVX512_VNNI AVX512_BF16 AVX_VNNI FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+======================================================================
+SE-B1 V&V — SpatialEncoder3D (full assembly)
+Grid: (Z=20, qH=6, qW=6), N=720, C_in=21, D=128
+======================================================================
+
+--- G1: Shape ---
+  input: (2, 20, 6, 6, 21) -> output: (2, 20, 6, 6, 128)  PASS
+
+--- G2: Total Parameter Count ---
+  total: 782,528
+  expected: 782,528
+  match: PASS
+
+--- C10: STRING Coords ---
+  shape: (720, 3) (expected (720, 3))  PASS
+  range: [0.00, 1.00]  PASS
+
+--- D4: Flatten/Unflatten Consistency ---
+  x == unflatten(flatten(x)): PASS
+
+--- D5: STRING Axis Distinction ---
+  Z step: 0.0526 (expected 0.0526, pitch 10cm)
+  Y step: 0.2000 (expected 0.2000, pitch 21.6cm)
+  X step: 0.2000 (expected 0.2000, pitch 21.6cm)
+  Z != Y/X (different physics pitch): PASS
+
+--- End-to-end: halo_expand + encoder ---
+  quarter (2, 20, 5, 5, 21) -> halo (2, 20, 6, 6, 21) -> encoder (2, 20, 6, 6, 128)  PASS
+
+======================================================================
+SE-B1 V&V: ALL PASS
+======================================================================

@@ -42,8 +42,8 @@ Data input: (B, 20, 5, 5, 21)               ← 데이터셋 quarter
 [CellEmbedder] Conv3D(1,1,1), 21 → 128       ← Stem (no spatial mixing)
        │
        ▼ (B, 20, 6, 6, 128)
-[LearnedAbsolutePE3D] +(20, 6, 6, 128) trainable embedding   ← LAPE 1회 add
-       │                                      (이후 모든 layer는 residual stream으로 전달)
+[ConditionalLAPE3D] +(20, 6, 6, 128) sym_type별 trainable 텐서 선택   ← LAPE 1회 add
+       │              (sym_type=0→mirror 텐서, =1→rotation 텐서. 이후 residual stream 전달)
        ▼ (B, 20, 6, 6, 128)
 [reshape] flatten spatial → (B, 720, 128)
        │
@@ -77,9 +77,9 @@ Data input: (B, 20, 5, 5, 21)               ← 데이터셋 quarter
 
 [Final crop] (B, 20, 6, 6, C_out) → (B, 20, 5, 5, C_out)   ← 외부 인터페이스 한 곳
 
-Total params: ~600K (encoder body) + LAPE (20·6·6·128 = 92,160 또는 D_lape에 따라 변동)
-  - Halo (6,6) LAPE: 92,160 vs Quarter (5,5) LAPE: 64,000 → 차이 +28,160 (4.3%)
-  - 정확한 LAPE 차원은 05_position_encoding_lape.md 결정 시 확정
+Total params: ~600K (encoder body) + ConditionalLAPE (20·6·6·128 × 2 = 184,320)
+  - mirror/rotation 각각 92,160개 trainable 스칼라, 합계 184,320개
+  - 단일 LAPE (LearnedAbsolutePE3D) 대비 +92,160개 (+14% of encoder)
 ```
 
 **위치 인코딩 적용 위치 — 학계 표준 패턴**:
