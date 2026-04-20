@@ -24,7 +24,7 @@
 |:---:|---|---|:---:|:---:|---|
 | 01 | 입력 격자 | Quarter 5×5 (데이터 입력, 500 cell) → halo expand (6,6) (인코더 처리, 720 cell) | 4 | 2026-04-08 | [01_input_grid.md](01_input_grid.md) |
 | 02 | CellEmbedder | Conv3D(1,1,1), 21 → 128 (격자 형상 무관) | 4 | 2026-04-08 | [02_cell_embedder.md](02_cell_embedder.md) |
-| 03 | Attention backbone + Position Encoding | Full Attention × 3, D=128, H=4 + LAPE (절대, 1회 add) + STRING (상대, Q/K 회전) | (Full vs Block+Grid) × PE 5종 × 조합 | 2026-04-07 ~ 2026-04-08 | [03_attention_and_position.md](03_attention_and_position.md) |
+| 03 | Attention backbone + Position Encoding | Full Attention × 3, D=128, H=4 + **ConditionalLAPE3D** (절대, sym_type 분기, 1회 add) + STRING (상대, Q/K 회전) | (Full vs Block+Grid) × PE 5종 × 조합 | 2026-04-07 ~ 2026-04-14 | [03_attention_and_position.md](03_attention_and_position.md), [../2026-04-14 (최종결정 전 검토본) Conditional LAPE 적용 검토.md](../2026-04-14 (최종결정 전 검토본) Conditional LAPE 적용 검토.md) |
 | 04 | 정규화 + 정밀도 + 미채용 옵션 | Pre-LN + LayerNorm + FP32(TF32) / 미채용 7개 항목 | 다수 | 2026-04-04 ~ 2026-04-08 | [04_normalization_omitted_options.md](04_normalization_omitted_options.md) |
 | 05 | 대칭 모드 / halo expand | halo (6,6) all-the-way + 최종 (5,5) crop | 3 | 2026-04-08 | [05_symmetry_mode.md](05_symmetry_mode.md) |
 

@@ -3,6 +3,7 @@
 > **작성일**: 2026-03-30
 > **개정일**: 2026-04-08 — §3.6 신설 (L_diff 상대 잔차 형식 + redundancy 분석 + Consistency Barrier 참조), §5.1 전체 손실 함수 공식에 L_data_halo / L_diff_rel 반영.
 > **개정일**: 2026-04-09 — 공간 형상 표기에 단계 구분 추가 (데이터 입력 vs 인코더 처리 vs L_diff 합산 도메인)
+> **개정일**: 2026-04-20 — §0.2/§0.3 정정 (branch shape T,30 + dtype float32 + Frozen Xenon 표기 → 5분 진화 반영), §1 (L_Bateman) 상단에 Phase 1 적용 가능성 검증 결과 링크 추가
 > **목적**: 산재된 Physical Loss 관련 설계/검증 문서를 단일 참조 문서로 통합
 > **적용 대상**: 경수형 SMR의 부하추종 노심 해석 대리모델
 > **공간 형상**: 데이터 입력 (20, 5, 5) [quarter, 500 inner cell] → halo expand → 인코더/Mamba/디코더 처리 (20, 6, 6) [720 cell, halo 11개 포함] → L_diff_rel 합산 도메인 (20, 5, 5) [inner 500 cell, halo는 stencil neighbor lookup] → 최종 외부 출력 (20, 5, 5). 1/4 대칭. 상세: `공간인코더 구현 계획/인코더 컴포넌트별 채용 이유/05_symmetry_mode.md`
@@ -80,31 +81,37 @@
 | `query_rod_offsets_1d` | (T,31) | float32 | 1D rod offset | step |
 | `query_pload` | (T,) | float32 | 목표 출력 수준 | 0~1 |
 
-**해석 결과 (GT 타겟, 31-way: index 0=critical, 1~30=branch)**:
+**해석 결과 (GT 타겟, 30-way: b=0=critical, b=1~29=rod_offset 분기)**:
+
+> **2026-04-20 정정**: 이전 표기 "31-way: index 0=critical, 1~30=branch"은 실제 데이터와 불일치. 실제 second axis는 30 (b=0~29).
 
 | HDF5 필드 | Shape | dtype | 물리량 | 단위 | Loss 사용 |
 |-----------|-------|-------|--------|------|:---------:|
-| `result_power` | (T,31,Z,qH,qW) | float32 | 절대 열출력 | MW/node | L_data |
-| `result_tcool` | (T,31,Z,qH,qW) | float32 | 냉각재 온도 | °C | L_data |
-| `result_tfuel` | (T,31,Z,qH,qW) | float32 | 연료 온도 | °C | L_data, L_σXe(예측) |
-| `result_rhocool` | (T,31,Z,qH,qW) | float32 | 냉각재 밀도 | g/cc | L_data, L_σXe(예측) |
-| `result_keff` | (T,31) | float64 | 유효증배계수 | — | L_data, L_keff |
-| `result_ao` | (T,31) | float32 | 축방향 출력 편차 | — | L_data |
-| `result_max_pin_power` | (T,31) | float32 | 핀 출력 peaking factor | — | — |
-| `result_max_pin_loc` | (T,31,3) | int32 | 핀 피크 위치 (z,y,x) | — | — |
+| `result_power` | (T,30,Z,qH,qW) | float32 | 절대 열출력 | MW/node | L_data |
+| `result_tcool` | (T,30,Z,qH,qW) | float32 | 냉각재 온도 | °C | L_data |
+| `result_tfuel` | (T,30,Z,qH,qW) | float32 | 연료 온도 | °C | L_data, L_σXe(예측) |
+| `result_rhocool` | (T,30,Z,qH,qW) | float32 | 냉각재 밀도 | g/cc | L_data, L_σXe(예측) |
+| `result_keff` | (T,30) | float64 | 유효증배계수 | — | L_data, L_keff (후순위) |
+| `result_ao` | (T,30) | float32 | 축방향 출력 편차 | — | L_data |
+| `result_max_pin_power` | (T,30) | float32 | 핀 출력 peaking factor | — | — |
+| `result_max_pin_loc` | (T,30,3) | int32 | 핀 피크 위치 (z,y,x) | — | — |
 
-**Branch 핵종 데이터 (31-way)**:
+**Branch 핵종 데이터 (30-way: b=0=critical, b=1~29=rod_offset 분기)**:
+
+> **2026-04-20 정정**: 이전 표기 "31-way, dtype float64, Frozen Xenon"은 실제 데이터와 불일치하여 정정.
+> 실제 데이터: shape (T, **30**, ...), dtype **float32**, b=0이 critical 자체이며 b=1~29가 rod_offset 변경 + 5분 연소 진화 결과 (frozen 아님).
+> 검증: [piecewise-test/2026-04-20_branch_xenon_evolution_결과.md](../../../piecewise-test/2026-04-20_branch_xenon_evolution_결과.md), 관련 결정: [2026-04-20 Branch Xenon 진화 검증.md](../2026-04-20 Branch Xenon 진화 검증 — L_Bateman Phase 1 적용 가능성.md)
 
 | HDF5 필드 | Shape | dtype | 물리량 | 비고 |
 |-----------|-------|-------|--------|------|
-| `branch_xe` | (T,31,Z,qH,qW) | float64 | N_Xe | Frozen Xenon: CRS와 거의 동일 |
-| `branch_sm` | (T,31,Z,qH,qW) | float64 | N_Sm | |
-| `branch_i135` | (T,31,Z,qH,qW) | float64 | N_I | |
-| `branch_sigma_a_xe` | (T,31,Z,qH,qW,2) | float64 | σ_a^Xe (2군) | branch 조건(T_f, ρ_m 변동)에 따라 미세 차이 |
-| `branch_flux` | (T,31,Z,qH,qW,2) | float64 | φ (2군) | |
-| `branch_Sigma_f` | (T,31,Z,qH,qW,2) | float64 | Σ_f (2군) | |
-| `branch_yield_xe` | (T,31,Z,qH,qW) | float64 | γ_Xe | |
-| `branch_yield_i` | (T,31,Z,qH,qW) | float64 | γ_I | |
+| `branch_xe` | (T,30,Z,qH,qW) | float32 | N_Xe | b=0=critical, b=1~29=rod_offset 분기 + **5분 진화 반영** (검증 ~1% 변화, frozen 아님) |
+| `branch_sm` | (T,30,Z,qH,qW) | float32 | N_Sm | b=0=critical, b=1~29=분기 |
+| `branch_i135` | (T,30,Z,qH,qW) | float32 | N_I | b=0=critical, b=1~29=분기 |
+| `branch_sigma_a_xe` | (T,30,Z,qH,qW,2) | float32 | σ_a^Xe (2군) | branch 조건(T_f, ρ_m 변동)에 따라 미세 차이 |
+| `branch_flux` | (T,30,Z,qH,qW,2) | float32 | φ (2군) | |
+| `branch_Sigma_f` | (T,30,Z,qH,qW,2) | float32 | Σ_f (2군) | |
+| `branch_yield_xe` | (T,30,Z,qH,qW) | float32 | γ_Xe | |
+| `branch_yield_i` | (T,30,Z,qH,qW) | float32 | γ_I | |
 
 > **node_fullcore 데이터** (분석/참조용): 위 critical/branch 필드 중 일부가 quarter crop 전 풀코어(Z,18,18) 형태로도 저장됨. 모델 학습에는 사용하지 않음.
 
@@ -118,12 +125,16 @@
 | Z | 20 | 축방향 연료 평면 (반사체 K=1, K=22 제외) |
 | qH, qW | 5, 5 | 1/4 대칭 크롭 후 반경 방향 |
 | 2 | 2 | 에너지군 (g=1: fast, g=2: thermal) |
-| 31 | 31 | CRS(1) + Branch(30) |
+| 30 | 30 | Branch 필드의 두 번째 축 — b=0=critical 자체, b=1~29=rod_offset 분기 (실제 분기는 29개). critical 필드는 별도 (T, ...) shape로 저장됨. **2026-04-20 정정**: 기존 표기 "31 = CRS(1) + Branch(30)"은 데이터 구조와 불일치 |
 | 10 | 10 | xs_fuel 채널 수 (νΣf1, Σf1, Σc1, Σtr1, Σs12, νΣf2, Σf2, Σc2, Σtr2, Σs21) |
 
 ---
 
 ## 1. L_Bateman — Xe/I-135 Bateman ODE 잔차
+
+> **2026-04-20 추가 검증**: Branch 데이터의 Xe 진화 가능성 검증 완료. Branch는 frozen Xenon이 아니라 5분 시간 진화를 정확히 반영하므로, **L_Bateman을 Phase 1 (Branch 단일 step) 학습에서도 적용 가능**.
+> 검증 상세: [L_Bateman/2026-04-20 Branch Xenon 진화 검증 — L_Bateman Phase 1 적용 가능성.md](L_Bateman/2026-04-20 Branch Xenon 진화 검증 — L_Bateman Phase 1 적용 가능성.md)
+> 검증 코드/결과: [piecewise-test/2026-04-20_branch_xenon_evolution_결과.md](../../../../piecewise-test/2026-04-20_branch_xenon_evolution_결과.md)
 
 ### 1.1 연립 방정식
 
