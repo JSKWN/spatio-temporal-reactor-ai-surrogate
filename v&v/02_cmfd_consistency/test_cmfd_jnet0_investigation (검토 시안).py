@@ -1,4 +1,10 @@
 """
+⚠️ 본 파일 은 (검토 시안) — 45 줄 보조 스크립트, 결론 미제시.
+최종 확정 결과 는 다음 자료 참조:
+  - piecewise-test/JNET0(MAS_NXS)의 공식 정합성 검증(오차0%확인)/2026-03-31_step0_abs_jnet0_result.txt (A1)
+  - piecewise-test/JNET0(MAS_NXS)의 공식 정합성 검증(오차0%확인)/2026-03-31_step0_abs_jnet0_verification.py (A2)
+  - 분류 기록: project_fnc/v-smr_load_following/data_preprocess/archive/작성 내용 및 계획/2026-04-23 CMFD 모듈 검증 기록.md §3
+
 CMFD vs JNET0 심층 조사: 오차 원인 분석.
 
 목적:

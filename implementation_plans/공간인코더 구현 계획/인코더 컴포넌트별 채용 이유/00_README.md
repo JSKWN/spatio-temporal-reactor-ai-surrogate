@@ -33,13 +33,15 @@
 ## 아키텍처 한눈에 보기
 
 ```
-Data input: (B, 20, 5, 5, 21)               ← 데이터셋 quarter
-       │  state(10) + xs_fuel(10) + rod_map(1)
+Data input: (B, 20, 5, 5, 23)               ← 데이터셋 quarter (2026-04-22 갱신, state 12ch)
+       │  state(12) + xs_fuel(10) + rod_map(1)
+       │  state 12ch: power, T_cool, T_fuel, ρ_cool, N_Xe, N_I,
+       │              φ_g1, φ_g2, σ_a^Xe_g1, σ_a^Xe_g2, **Σ_f_g1, Σ_f_g2 (신설)**
        ▼
 [halo_expand(sym)]  mirror 또는 rotational 매핑 (05_symmetry_mode)
        │
-       ▼ (B, 20, 6, 6, 21)                  ← halo expand 완료, 인코더 진입
-[CellEmbedder] Conv3D(1,1,1), 21 → 128       ← Stem (no spatial mixing)
+       ▼ (B, 20, 6, 6, 23)                  ← halo expand 완료, 인코더 진입
+[CellEmbedder] Conv3D(1,1,1), 23 → 128       ← Stem (no spatial mixing)
        │
        ▼ (B, 20, 6, 6, 128)
 [ConditionalLAPE3D] +(20, 6, 6, 128) sym_type별 trainable 텐서 선택   ← LAPE 1회 add

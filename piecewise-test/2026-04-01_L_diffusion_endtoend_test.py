@@ -71,7 +71,7 @@ def main():
 
     # Quarter-core 어셈블리 맵 (5×5) — 반사체 인접 판별용
     # 11×11 fullcore에서 우하단 quarter: j_full=5~9, i_full=5~9
-    ASM_11 = np.array([r.split() for r in """o o o R4 R2 R1 R2 R4 o o o
+    full_core_assy_lp_map = np.array([r.split() for r in """o o o R4 R2 R1 R2 R4 o o o
 o o R6 R3 A3 B3 A3 R3 R6 o o
 o R6 R5 A3 A2 A2 A2 A3 R5 R6 o
 R4 R3 A3 B5 A3 A2 A3 B5 A3 R3 R4
@@ -82,9 +82,9 @@ R4 R3 A3 B5 A3 A2 A3 B5 A3 R3 R4
 o R6 R5 A3 A2 A2 A2 A3 R5 R6 o
 o o R6 R3 A3 B3 A3 R3 R6 o o
 o o o R4 R2 R1 R2 R4 o o o""".strip().split('\n')])
-    IS_FUEL_11 = np.array([[not c.startswith('R') and c != 'o' for c in r] for r in ASM_11])
-    IS_ORTHO_11 = np.array([[c in ('R1', 'R2') for c in r] for r in ASM_11])
-    IS_DIAG_11 = np.array([[c in ('R3', 'R4', 'R5', 'R6') for c in r] for r in ASM_11])
+    is_fuel_full_core_assy = np.array([[not c.startswith('R') and c != 'o' for c in r] for r in full_core_assy_lp_map])
+    is_ortho_refl_full_core_assy = np.array([[c in ('R1', 'R2') for c in r] for r in full_core_assy_lp_map])
+    is_diag_refl_full_core_assy = np.array([[c in ('R3', 'R4', 'R5', 'R6') for c in r] for r in full_core_assy_lp_map])
 
     # Quarter (5×5) 추출: q_y=0~4 → full_j=5~9, q_x=0~4 → full_i=5~9
     # 면 유형 판별 함수
@@ -100,11 +100,11 @@ o o o R4 R2 R1 R2 R4 o o o""".strip().split('\n')])
 
         if nj < 0 or nj >= 11 or ni < 0 or ni >= 11:
             return 'void'
-        if IS_FUEL_11[nj, ni]:
+        if is_fuel_full_core_assy[nj, ni]:
             return 'fuel'
-        if IS_ORTHO_11[nj, ni]:
+        if is_ortho_refl_full_core_assy[nj, ni]:
             return 'ortho'
-        if IS_DIAG_11[nj, ni]:
+        if is_diag_refl_full_core_assy[nj, ni]:
             return 'diag'
         return 'void'
 

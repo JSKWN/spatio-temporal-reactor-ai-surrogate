@@ -36,7 +36,7 @@ from lf_preprocess.xs_voxel_builder import build_xs_voxel
 WORKSPACE = Path(r"D:\workspace_lf_20260326_40LP")
 _NUM_RE = re.compile(r'[-+]?\d+\.?\d*(?:[Ee][+-]?\d+)?')
 
-ASM_11 = np.array([r.split() for r in """o o o R4 R2 R1 R2 R4 o o o
+full_core_assy_lp_map = np.array([r.split() for r in """o o o R4 R2 R1 R2 R4 o o o
 o o R6 R3 A3 B3 A3 R3 R6 o o
 o R6 R5 A3 A2 A2 A2 A3 R5 R6 o
 R4 R3 A3 B5 A3 A2 A3 B5 A3 R3 R4
@@ -47,7 +47,7 @@ R4 R3 A3 B5 A3 A2 A3 B5 A3 R3 R4
 o R6 R5 A3 A2 A2 A2 A3 R5 R6 o
 o o R6 R3 A3 B3 A3 R3 R6 o o
 o o o R4 R2 R1 R2 R4 o o o""".strip().split('\n')])
-IS_FUEL_9x9 = np.array([[not ASM_11[j+1][i+1].startswith('R') and ASM_11[j+1][i+1] != 'o'
+is_fuel_full_core_inner_9x9_assy = np.array([[not full_core_assy_lp_map[j+1][i+1].startswith('R') and full_core_assy_lp_map[j+1][i+1] != 'o'
                           for i in range(9)] for j in range(9)])
 
 
@@ -100,7 +100,7 @@ def parse_nxs_diffusion_xs(nxs_path):
         aj = nj // ndivxy - 1
         if ai < 0 or ai >= nc or aj < 0 or aj >= nr:
             continue
-        if not IS_FUEL_9x9[aj, ai]:
+        if not is_fuel_full_core_inner_9x9_assy[aj, ai]:
             continue
 
         for t in targets:
@@ -154,7 +154,7 @@ def main():
     ]
 
     # Fuel mask
-    fuel_q = np.array([[IS_FUEL_9x9[4 + qy, 4 + qx] for qx in range(5)] for qy in range(5)])
+    fuel_q = np.array([[is_fuel_full_core_inner_9x9_assy[4 + qy, 4 + qx] for qx in range(5)] for qy in range(5)])
 
     print(f"\n  대상: {lp_id}/{profile}, step 1")
     print(f"  XSL: {data_dir / 'MAS_XSL'}")
@@ -195,7 +195,7 @@ def main():
             nxs_v = nfs_nxs[:, qy, qx].mean()
             diff = (nxs_v - xsl_v) / xsl_v * 100
             row += f"{diff:+7.2f}%  "
-        asm_row = " ".join(ASM_11[5 + qy, 5 + qx] for qx in range(5))
+        asm_row = " ".join(full_core_assy_lp_map[5 + qy, 5 + qx] for qx in range(5))
         print(row + f"  ({asm_row})")
 
     print(f"\n  => 음수 = NXS < XSL (feedback으로 fission 감소)")

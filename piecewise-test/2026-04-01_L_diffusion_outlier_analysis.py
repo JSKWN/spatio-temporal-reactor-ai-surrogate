@@ -54,7 +54,7 @@ TEST_LPS = [
 N_LP, N_STEP, N_Z, N_QY, N_QX = 10, 10, 20, 5, 5
 
 # 11x11 full-core assembly map
-ASM_11 = np.array([r.split() for r in """o o o R4 R2 R1 R2 R4 o o o
+full_core_assy_lp_map = np.array([r.split() for r in """o o o R4 R2 R1 R2 R4 o o o
 o o R6 R3 A3 B3 A3 R3 R6 o o
 o R6 R5 A3 A2 A2 A2 A3 R5 R6 o
 R4 R3 A3 B5 A3 A2 A3 B5 A3 R3 R4
@@ -66,9 +66,9 @@ o R6 R5 A3 A2 A2 A2 A3 R5 R6 o
 o o R6 R3 A3 B3 A3 R3 R6 o o
 o o o R4 R2 R1 R2 R4 o o o""".strip().split('\n')])
 
-IS_FUEL_11 = np.array([[not c.startswith('R') and c != 'o' for c in r] for r in ASM_11])
-IS_ORTHO_11 = np.array([[c in ('R1', 'R2') for c in r] for r in ASM_11])
-IS_DIAG_11 = np.array([[c in ('R3', 'R4', 'R5', 'R6') for c in r] for r in ASM_11])
+is_fuel_full_core_assy = np.array([[not c.startswith('R') and c != 'o' for c in r] for r in full_core_assy_lp_map])
+is_ortho_refl_full_core_assy = np.array([[c in ('R1', 'R2') for c in r] for r in full_core_assy_lp_map])
+is_diag_refl_full_core_assy = np.array([[c in ('R3', 'R4', 'R5', 'R6') for c in r] for r in full_core_assy_lp_map])
 
 FACE_NAMES = ['N', 'S', 'E', 'W', 'B', 'T']
 
@@ -92,11 +92,11 @@ def get_face_type(qy, qx, face):
     nj, ni = fj + dj, fi + di
     if nj < 0 or nj >= 11 or ni < 0 or ni >= 11:
         return 'void'
-    if IS_FUEL_11[nj, ni]:
+    if is_fuel_full_core_assy[nj, ni]:
         return 'fuel'
-    if IS_ORTHO_11[nj, ni]:
+    if is_ortho_refl_full_core_assy[nj, ni]:
         return 'ortho'
-    if IS_DIAG_11[nj, ni]:
+    if is_diag_refl_full_core_assy[nj, ni]:
         return 'diag'
     return 'void'
 
@@ -348,8 +348,8 @@ def section2_xy_position_map(d):
         asm_row = ""
         face_row = ""
         for qx in range(5):
-            asm_name = ASM_11[qy + 5, qx + 5]
-            if not IS_FUEL_11[qy + 5, qx + 5]:
+            asm_name = full_core_assy_lp_map[qy + 5, qx + 5]
+            if not is_fuel_full_core_assy[qy + 5, qx + 5]:
                 asm_row += f"  {'  ·  ':<10s}"
                 face_row += f"  {'     ':<10s}"
             else:
@@ -387,7 +387,7 @@ def section2_xy_position_map(d):
         ("g2 outlier", 0, 2, "LP_0009, z=17"),
     ]:
         fj, fi = qy + 5, qx + 5
-        asm = ASM_11[fj, fi]
+        asm = full_core_assy_lp_map[fj, fi]
         print(f"\n  [{label}] (qy={qy}, qx={qx}) -> full(j={fj}, i={fi}) = {asm}")
         print(f"    {desc}")
         for face in ['N', 'S', 'E', 'W']:
@@ -395,7 +395,7 @@ def section2_xy_position_map(d):
             dqy = {'N': -1, 'S': +1, 'E': 0, 'W': 0}[face]
             dqx = {'N': 0, 'S': 0, 'E': +1, 'W': -1}[face]
             nj, ni = fj + dqy, fi + dqx
-            nb_name = ASM_11[nj, ni] if 0 <= nj < 11 and 0 <= ni < 11 else "outside"
+            nb_name = full_core_assy_lp_map[nj, ni] if 0 <= nj < 11 and 0 <= ni < 11 else "outside"
             print(f"    {face}면: {fl:<8s} -> ({nj},{ni}) = {nb_name}")
         print(f"    B면: {'bottom' if True else ''} (z=0 only)")
         print(f"    T면: {'top' if True else ''} (z=19 only)")
@@ -407,14 +407,14 @@ def section2_xy_position_map(d):
     for qy in range(5):
         for qx in range(5):
             fj, fi = qy + 5, qx + 5
-            if not IS_FUEL_11[fj, fi]:
+            if not is_fuel_full_core_assy[fj, fi]:
                 ax.add_patch(plt.Rectangle((qx - 0.45, 4 - qy - 0.45), 0.9, 0.9,
                                            facecolor='#ddd', edgecolor='#999', lw=0.5))
-                ax.text(qx, 4 - qy, ASM_11[fj, fi], ha='center', va='center',
+                ax.text(qx, 4 - qy, full_core_assy_lp_map[fj, fi], ha='center', va='center',
                         fontsize=8, color='#999')
                 continue
 
-            asm = ASM_11[fj, fi]
+            asm = full_core_assy_lp_map[fj, fi]
             color = asm_colors.get(asm, '#ccc')
             ax.add_patch(plt.Rectangle((qx - 0.45, 4 - qy - 0.45), 0.9, 0.9,
                                        facecolor=color, edgecolor='black', lw=1.5))
@@ -635,10 +635,10 @@ def section5_xs_comparison(d):
     ]
 
     # 연료 위치 마스크 (quarter-core 5x5 중 실제 연료)
-    fuel_mask_q = np.array([[IS_FUEL_11[qy + 5, qx + 5] for qx in range(5)] for qy in range(5)])
+    fuel_mask_q = np.array([[is_fuel_full_core_assy[qy + 5, qx + 5] for qx in range(5)] for qy in range(5)])
 
     for title, li, z, qy, qx in cases:
-        print(f"\n  [{title}] z={z}, (qy={qy},qx={qx}) = {ASM_11[qy+5, qx+5]}")
+        print(f"\n  [{title}] z={z}, (qy={qy},qx={qx}) = {full_core_assy_lp_map[qy+5, qx+5]}")
         xs_node = d['xs_all'][li, z, qy, qx]  # (10,)
         # 연료 위치만 평균 (비연료 XS=0 제외)
         xs_lp = d['xs_all'][li]  # (20, 5, 5, 10)

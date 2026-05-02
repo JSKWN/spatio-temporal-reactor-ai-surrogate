@@ -6,6 +6,20 @@
 > **결론**: Branch는 Frozen Xenon 아님. 5분 시간 진화를 정확히 반영. **L_Bateman Phase 1 적용 가능**.
 > **검증 자료**: [piecewise-test/2026-04-20_branch_xenon_evolution_결과.md](../../piecewise-test/2026-04-20_branch_xenon_evolution_결과.md)
 
+> **2026-04-23 후속 결정 사항** (본 검증 의 결론 을 토대로 한 L_Bateman 의 최종 설계):
+> - **L_Bateman 수식 = A+B Hybrid** (Path A 단독 / Path B 단독 안 모두 철회):
+>   - A 항: `MSE(N̂, N_phys)` (N̂ 에 physics constraint, 외삽 / OOD 대응)
+>   - B 항: `MSE(N_phys, N_GT(t+1))` (예측 계수 에 GT anchor, model misspecification 보정)
+>   - inner_split 합 = 1.0: A=0.75, B=0.25 / outer_weight=0.1 (Phase 1b annealing 종료 후)
+> - **L_Bateman 에 예측 물리량 사용**: ODE 입력 의 φ, σ_a^Xe, Σ_f 는 모델 예측값 / N (초기조건) 은 GT / γ 시계열 GT / λ 상수
+> - **Σ_f state 채널 신설** (state 12ch, ch 10/11) — Σ_f 도 모델 예측 대상, L_data_Sigma_f 신설
+> - **Phase 별 적용 범위**:
+>   - Phase 1b: Branch 단일 step (본 검증 결과 직접 활용)
+>   - Phase 2: CRS 시퀀스 모든 step (D1)
+>   - Phase 3: K-step rollout 매 step (D2), 1/K 평균화 적용 (#9)
+> - **정규화 공간 loss** (방법 1): Bateman ODE 만 원 공간, loss 계산 은 정규화 공간 (N_xe / N_I normalizer 재정규화)
+> - **상세**: [Loss 설계 운용 가이드 §5.3 / §5.4](../2026-04-23 Loss 설계 운용 가이드 (계층 분류 + 가중치 + 모니터링).md), [Physical Loss §1.9](../2026-03-30 Physical Loss 통합 레퍼런스.md)
+
 ---
 
 ## 1. 문제 제기 배경

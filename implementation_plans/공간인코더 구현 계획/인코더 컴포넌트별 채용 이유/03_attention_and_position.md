@@ -46,7 +46,7 @@
 
 | 항목 | 값 | 근거 |
 |---|:---:|---|
-| **D (hidden size)** | 128 | 21ch 입력 (state 10 + xs_fuel 10 + rod 1) 의 정보 보존. 기존 CustomMaxViT3D D=64 는 xs_fuel 10ch 전용이었으므로 21ch 입력에는 64~128 범위 → 정보 병목 회피 위해 128 채택 |
+| **D (hidden size)** | 128 | **23ch 입력 (state 12 + xs_fuel 10 + rod 1)** 의 정보 보존 (2026-04-22 갱신, state 12ch — Σ_f g1/g2 신설). 기존 CustomMaxViT3D D=64 는 xs_fuel 10ch 전용이었으므로 23ch 입력에는 64~128 범위 → 정보 병목 회피 위해 128 채택 |
 | **H (heads)** | 4 | head_dim = D/H = 128/4 = 32. multi-head 표현력 + RoPE/STRING 안정성 검증 범위 |
 | **N_stages** | 3 | ViT/MaxViT 표준. D=128 + 3 stage 조합이 ~0.60M 파라미터로 표현력과 효율의 균형 |
 | **expand_ratio (FFN)** | 4 | Transformer 표준. FFN hidden = 128 × 4 = 512 |

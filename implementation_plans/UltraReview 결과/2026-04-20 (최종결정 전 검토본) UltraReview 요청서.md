@@ -1,6 +1,7 @@
 # UltraReview 요청서 — 원자로 시공간 AI 대리모델 아키텍처 검증
 
 > **작성일**: 2026-04-20
+> **2026-04-20 (오후) 갱신**: 본 요청서 1차 회신 반영하여 baseline 변경 — **N=2 → N=3**, **Mamba state_dim=16 → 32**. 향후 추가 검토자에게는 본 갱신본을 사용.
 > **목적**: Mamba-3 + Attention 하이브리드 기반 원자로 시공간 AI 대리모델의 **최종 확정 설계** 를 외부 검토자에게 전달하여 구조적 타당성 / 치명적 허점 / 대안 제안을 받기 위한 요청서.
 > **활용 범위**: (1) 외부 LLM 수동 제출 (GPT / Gemini / Grok), (2) Zen MCP 등 자동화 도구 (설치 후), (3) 사내 시니어 연구자 피어 리뷰.
 > **선행 외부 자문 기록**: 2026-04-16 (Q1~Q6 기반 시계열 아키텍처 자문) → Phase 2a/2b 분할, Phase 3 신설의 근거가 됨. 본 요청서는 후속 라운드.
@@ -49,7 +50,7 @@
    └ FullAttention3D × 3 stages (STRING 상대 PE)
         ↓ z(t) ∈ (B, 720, 128)
 [Spatiotemporal Processor] ★코드 미착수★
-   ├ N=2 Blocks: [Mamba-3 × 2 + Attention + 소형 MLP]
+   ├ N=3 Blocks: [Mamba-3 × 2 + Attention + 소형 MLP]
    ├ p_load 주입: 공유 임베더 → Mamba concat + Attention AdaLN-Zero (이중 경로)
    └ 절대위치 재주입: encoder_lape skip connection (Raw α + WD, ReZero 패턴)
         ↓ d(t) ∈ (B, 720, 128)
@@ -73,7 +74,7 @@
 | 영역 | 결정 | 대안 대비 |
 |------|------|---------|
 | **공간 인코더** | FullAttention × 3, ConditionalLAPE3D (mirror/rotation 2 테이블), STRING 상대 PE | Equivariant 모델, 단일 LAPE 등 6개 대안 비교 후 확정 |
-| **프로세서** | Mamba-3 + Attention 하이브리드 (Jamba 패턴), N=2 블록, Mamba:Attention = 2:1 | A안 (cell-wise Mamba 단독), B안 (DreamerV3 단일 벡터 압축) 탈락 |
+| **프로세서** | Mamba-3 + Attention 하이브리드 (Jamba 패턴), N=3 블록, Mamba:Attention = 2:1, state_dim=32 | A안 (cell-wise Mamba 단독), B안 (DreamerV3 단일 벡터 압축) 탈락 |
 | **p_load 주입** | 이중 경로 — Mamba concat + Attention AdaLN-Zero | 단일 경로 (디코더만) → 물리 일관성 사유로 이중 경로 변경 |
 | **LAPE skip** | Raw α + WD (ReZero 패턴) — 인코더 LAPE를 attention 직전 add, stop_gradient | 미적용, ReZero 정통 대안 |
 | **디코더** | Conv3D 1×1×1 경량, **linear activation (활성화 없음)** | FullAttention+AdaLN (A안 원형) 탈락. Softplus/ReLU는 정규화 공간 부호 제약으로 금지 |
@@ -108,7 +109,7 @@
 ### Q1. 시공간 프로세서의 Mamba + Attention 하이브리드 구조
 
 **현재 결정**:
-- N=2 블록 적층, 각 블록 = [Mamba-3 × 2 → Attention → 소형 MLP]
+- N=3 블록 적층, 각 블록 = [Mamba-3 × 2 → Attention → 소형 MLP]
 - Mamba:Attention = 2:1 비율
 - Attention은 각 시점 독립적으로 720 cell 공간 결합 (stateless)
 - Mamba는 cell별 독립 시간 진화
@@ -116,7 +117,7 @@
 **검토 요청**:
 - 이 구조가 원자로 **시공간 결합 동역학** (공간 분포 변화 + 시간 진화가 결합된 Xe 진동, 제어봉 이동 효과) 을 충실히 표현할 수 있는가?
 - Mamba:Attention 비율 2:1 이 최적인가? 본 물리 문제에서 시간 > 공간 이라면 3:1 또는 4:1이 더 나은가? 그 반대인가?
-- N=2 깊이가 5분 단위 × 575 step 시퀀스에 충분한가? 깊이를 늘리면 parallel scan 비용이 어떻게 증가하는가?
+- N=3 깊이가 5분 단위 × 575 step 시퀀스에 충분한가? 깊이를 늘리면 parallel scan 비용이 어떻게 증가하는가? (이전 N=2 baseline 은 1차 회신에서 tight 평가됨)
 - Mamba → Attention 순서의 이론적 근거가 본 프로젝트에 유효한가? 역순 (Attention → Mamba) 이 유리한 시나리오가 있는가?
 
 ### Q2. p_load 이중 경로 주입 (Mamba concat + Attention AdaLN-Zero)

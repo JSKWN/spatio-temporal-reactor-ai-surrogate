@@ -1,7 +1,7 @@
 """Halo expand 함수 (SE-A4).
 
 Quarter core (..., Z, N, N, C) → halo-expanded (..., Z, N+1, N+1, C).
-대칭 유형 (mirror / rotation) 에 따라 halo cell 매핑이 다르다.
+대칭 유형 (mirror / rotational) 에 따라 halo cell 매핑이 다르다.
 N×N 크기에 제한 없음 (현재 사용: N=5 → 6×6).
 
 좌표계 (05a_symmetry_distinguishability_proof.md §2 참조):
@@ -18,7 +18,7 @@ N×N 크기에 제한 없음 (현재 사용: N=5 → 6×6).
         halo(h, 0) = inner(h, 2)     — quarter[..., :, 1, :]  (2열 복사)
         halo(0, 0) = inner(2, 2)     — quarter[..., 1, 1, :]
 
-    Rotation (90°):
+    Rotational (90°):
         halo(0, w) = inner(w, 2)     — quarter[..., :, 1, :] 의 전치
         halo(h, 0) = inner(2, h)     — quarter[..., 1, :, :] 의 전치
         halo(0, 0) = inner(2, 2)     — quarter[..., 1, 1, :]  (corner 동일)
@@ -42,7 +42,7 @@ def halo_expand(quarter: tf.Tensor, sym_type: tf.Tensor) -> tf.Tensor:
     Args:
         quarter: (..., Z, N, N, C) — quarter core 데이터.
                  앞쪽 차원은 자유 (예: (B, Z, N, N, C) 또는 (B, T, Z, N, N, C)).
-        sym_type: 스칼라 또는 (B,) int32 — 0=mirror, 1=rotation.
+        sym_type: 스칼라 또는 (B,) int32 — 0=mirror, 1=rotational.
 
     Returns:
         (..., Z, N+1, N+1, C) — halo cell이 채워진 텐서.
@@ -57,7 +57,7 @@ def halo_expand(quarter: tf.Tensor, sym_type: tf.Tensor) -> tf.Tensor:
     mirror_col = quarter[..., :, 1:2, :]
     mirror_corner = quarter[..., 1:2, 1:2, :]
 
-    # --- Rotation halo 매핑 ---
+    # --- Rotational halo 매핑 ---
     # halo_row: inner(w, 2) = quarter[..., :, 1, :] 의 H↔W 전치
     #   quarter[..., :, 1, :] → (..., Z, N, C) → expand → (..., Z, N, 1, C)
     #   전치 → (..., Z, 1, N, C)

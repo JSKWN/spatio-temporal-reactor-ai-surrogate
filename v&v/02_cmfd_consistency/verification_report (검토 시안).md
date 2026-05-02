@@ -1,5 +1,11 @@
 # CMFD 방향 규약 정합성 검증 보고서
 
+> ⚠️ **본 파일 은 (검토 시안)** — 결론 미확정 상태 의 초기 검증 보고서.
+> 최종 확정 결과 는 다음 자료 참조:
+> - `piecewise-test/JNET0(MAS_NXS)의 공식 정합성 검증(오차0%확인)/2026-03-31_step0_abs_jnet0_result.txt` (A1)
+> - `piecewise-test/2026-04-01_L_diffusion_코드검증_및_잔차원인분석.md` (A6)
+> - 분류 기록: `project_fnc/v-smr_load_following/data_preprocess/archive/작성 내용 및 계획/2026-04-23 CMFD 모듈 검증 기록.md` §3
+
 ## 검증 일자: 2026-04-02
 
 ---

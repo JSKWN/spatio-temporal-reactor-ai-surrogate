@@ -30,7 +30,7 @@ WORKSPACE = Path(r"D:\workspace_lf_20260326_40LP")
 SAVE_DIR = Path(__file__).parent
 
 # 11×11 LPD_BCH
-ASM = [
+ASSY = [
     ['o',  'o',  'o',  'R4', 'R2', 'R1', 'R2', 'R4', 'o',  'o',  'o' ],
     ['o',  'o',  'R6', 'R3', 'A3', 'B3', 'A3', 'R3', 'R6', 'o',  'o' ],
     ['o',  'R6', 'R5', 'A3', 'A2', 'A2', 'A2', 'A3', 'R5', 'R6', 'o' ],
@@ -90,7 +90,7 @@ def main():
     ax = axes[0]
     for j in range(11):
         for i in range(11):
-            draw_cell(ax, i, 10 - j, ASM[j][i], fontsize=7)
+            draw_cell(ax, i, 10 - j, ASSY[j][i], fontsize=7)
 
     # 대칭축
     ax.axhline(y=10 - 5, color='red', lw=3, ls='--', zorder=10)
@@ -129,7 +129,7 @@ def main():
     for qy in range(5):
         for qx in range(5):
             j, i = 5 + qy, 5 + qx
-            name = ASM[j][i]
+            name = ASSY[j][i]
             is_sym = (qy == 0) or (qx == 0)
             hl = '#e74c3c' if is_sym and name not in ('o', 'R3', 'R5', 'R6') else None
             draw_cell(ax, qx, 4 - qy, name, highlight=hl, fontsize=9)
@@ -138,9 +138,9 @@ def main():
     # N면 mirror: qy=-1 → mirror qy=1 (실제 full j=4)
     for qx in range(5):
         j_nb, i_nb = 4, 5 + qx  # actual N neighbor in full-core
-        name_nb = ASM[j_nb][i_nb]
+        name_nb = ASSY[j_nb][i_nb]
         j_mir, i_mir = 6, 5 + qx  # mirror = j=6 = qy=1
-        name_mir = ASM[j_mir][i_mir]
+        name_mir = ASSY[j_mir][i_mir]
 
         # Draw ghost cell above qy=0
         draw_cell(ax, qx, 5, name_nb, alpha=0.4, fontsize=7)
@@ -154,7 +154,7 @@ def main():
     # W면 mirror: qx=-1 → mirror qx=1 (실제 full i=4)
     for qy in range(5):
         j_nb, i_nb = 5 + qy, 4  # actual W neighbor in full-core
-        name_nb = ASM[j_nb][i_nb]
+        name_nb = ASSY[j_nb][i_nb]
 
         # Draw ghost cell left of qx=0
         draw_cell(ax, -1, 4 - qy, name_nb, alpha=0.4, fontsize=7)
@@ -193,12 +193,12 @@ def main():
     # mirror: index 3 (j=4) should equal index 5 (j=6)
 
     # Show flux values in quarter + ghost
-    IS_FUEL = lambda j, i: ASM[j][i] not in ('o', 'R1', 'R2', 'R3', 'R4', 'R5', 'R6')
+    IS_FUEL = lambda j, i: ASSY[j][i] not in ('o', 'R1', 'R2', 'R3', 'R4', 'R5', 'R6')
 
     for qy in range(5):
         for qx in range(5):
             j, i = 5 + qy, 5 + qx
-            name = ASM[j][i]
+            name = ASSY[j][i]
             color = ASM_COLORS.get(name, '#ccc')
             if IS_FUEL(j, i):
                 # 9×9 index: j_9x9 = j-1 (since 9×9 skips j=0,j=10), i_9x9 = i-1
@@ -220,7 +220,7 @@ def main():
     # N ghost (j=4 → 9×9 idx=3)
     for qx in range(5):
         j, i = 4, 5 + qx
-        name = ASM[j][i]
+        name = ASSY[j][i]
         if IS_FUEL(j, i):
             j9, i9 = j - 1, i - 1
             val_actual = phi[z_mid, j9, i9, 0]  # actual j=4
@@ -249,7 +249,7 @@ def main():
     # W ghost (i=4 → 9×9 idx=3)
     for qy in range(5):
         j, i = 5 + qy, 4
-        name = ASM[j][i]
+        name = ASSY[j][i]
         if IS_FUEL(j, i):
             j9, i9 = j - 1, i - 1
             val_actual = phi[z_mid, j9, i9, 0]
@@ -306,28 +306,28 @@ def main():
         # W face
         j_nb, i_nb = j, 4
         j_mr, i_mr = j, 6  # mirror of i=4 about i=5
-        print(f"  {'('+str(qy)+',0)':>10s}  {'W':>4s}  {'('+str(j_nb)+','+str(i_nb)+')':>10s}  {ASM[j_nb][i_nb]:>8s}  {'('+str(j_mr)+','+str(i_mr)+')':>10s}  {ASM[j_mr][i_mr]:>10s}  {'OK' if ASM[j_nb][i_nb]==ASM[j_mr][i_mr] else 'DIFF':>4s}")
+        print(f"  {'('+str(qy)+',0)':>10s}  {'W':>4s}  {'('+str(j_nb)+','+str(i_nb)+')':>10s}  {ASSY[j_nb][i_nb]:>8s}  {'('+str(j_mr)+','+str(i_mr)+')':>10s}  {ASSY[j_mr][i_mr]:>10s}  {'OK' if ASSY[j_nb][i_nb]==ASSY[j_mr][i_mr] else 'DIFF':>4s}")
 
     for qx in range(5):
         i = 5 + qx
         # N face
         j_nb, i_nb = 4, i
         j_mr, i_mr = 6, i
-        print(f"  {'(0,'+str(qx)+')':>10s}  {'N':>4s}  {'('+str(j_nb)+','+str(i_nb)+')':>10s}  {ASM[j_nb][i_nb]:>8s}  {'('+str(j_mr)+','+str(i_mr)+')':>10s}  {ASM[j_mr][i_mr]:>10s}  {'OK' if ASM[j_nb][i_nb]==ASM[j_mr][i_mr] else 'DIFF':>4s}")
+        print(f"  {'(0,'+str(qx)+')':>10s}  {'N':>4s}  {'('+str(j_nb)+','+str(i_nb)+')':>10s}  {ASSY[j_nb][i_nb]:>8s}  {'('+str(j_mr)+','+str(i_mr)+')':>10s}  {ASSY[j_mr][i_mr]:>10s}  {'OK' if ASSY[j_nb][i_nb]==ASSY[j_mr][i_mr] else 'DIFF':>4s}")
 
     print(f"\n  전체 mirror pair assembly 일치: ", end="")
     all_ok = True
     for j in range(5):
         for i in range(11):
-            if ASM[j][i] != ASM[10-j][i]:
+            if ASSY[j][i] != ASSY[10-j][i]:
                 all_ok = False
-            if ASM[j][i] != ASM[j][10-i]:
+            if ASSY[j][i] != ASSY[j][10-i]:
                 pass  # not necessarily J-mirror
     # Check J mirror: row j ↔ row 10-j
-    j_ok = all(ASM[j] == ASM[10-j] for j in range(11) for _ in [0])
+    j_ok = all(ASSY[j] == ASSY[10-j] for j in range(11) for _ in [0])
     # Actually check element-wise
-    j_ok = all(ASM[j][i] == ASM[10-j][i] for j in range(11) for i in range(11))
-    i_ok = all(ASM[j][i] == ASM[j][10-i] for j in range(11) for i in range(11))
+    j_ok = all(ASSY[j][i] == ASSY[10-j][i] for j in range(11) for i in range(11))
+    i_ok = all(ASSY[j][i] == ASSY[j][10-i] for j in range(11) for i in range(11))
     print(f"J-mirror={'OK' if j_ok else 'FAIL'}, I-mirror={'OK' if i_ok else 'FAIL'}")
 
 

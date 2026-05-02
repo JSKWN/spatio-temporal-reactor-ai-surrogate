@@ -14,7 +14,7 @@ R4 반사체 인접면 식별 검증 + 시각화.
 import numpy as np
 
 # ── 어셈블리 맵 (11×11) ──
-ASM_MAP = np.array([r.split() for r in """o o o R4 R2 R1 R2 R4 o o o
+ASSY_MAP = np.array([r.split() for r in """o o o R4 R2 R1 R2 R4 o o o
 o o R6 R3 A3 B3 A3 R3 R6 o o
 o R6 R5 A3 A2 A2 A2 A3 R5 R6 o
 R4 R3 A3 B5 A3 A2 A3 B5 A3 R3 R4
@@ -26,9 +26,9 @@ o R6 R5 A3 A2 A2 A2 A3 R5 R6 o
 o o R6 R3 A3 B3 A3 R3 R6 o o
 o o o R4 R2 R1 R2 R4 o o o""".strip().split('\n')])
 
-IS_FUEL = np.array([[not c.startswith('R') and c != 'o' for c in r] for r in ASM_MAP])
-IS_ORTHO = np.array([[c in ('R1', 'R2') for c in r] for r in ASM_MAP])
-IS_DIAG = np.array([[c in ('R3', 'R4', 'R5', 'R6') for c in r] for r in ASM_MAP])
+IS_FUEL = np.array([[not c.startswith('R') and c != 'o' for c in r] for r in ASSY_MAP])
+IS_ORTHO = np.array([[c in ('R1', 'R2') for c in r] for r in ASSY_MAP])
+IS_DIAG = np.array([[c in ('R3', 'R4', 'R5', 'R6') for c in r] for r in ASSY_MAP])
 
 # ── R4 수정된 매핑 (확정) ──
 FACE_DIR = {'N': (-1, 0), 'S': (+1, 0), 'E': (0, +1), 'W': (0, -1)}
@@ -52,7 +52,7 @@ def main():
                 nj, ni = aj + dj, ai + di
                 if 0 <= nj < 11 and 0 <= ni < 11 and not IS_FUEL[nj, ni]:
                     rtype = 'ortho' if IS_ORTHO[nj, ni] else 'diag' if IS_DIAG[nj, ni] else 'void'
-                    faces[face] = (ASM_MAP[nj, ni], rtype)
+                    faces[face] = (ASSY_MAP[nj, ni], rtype)
             if faces:
                 direct_boundaries[(aj, ai)] = faces
 
@@ -75,7 +75,7 @@ def main():
                 rtype = 'ortho' if IS_ORTHO[naj, nai] else 'diag' if IS_DIAG[naj, nai] else 'void'
                 if (aj, ai) not in r4_boundaries:
                     r4_boundaries[(aj, ai)] = {}
-                r4_boundaries[(aj, ai)][face] = (ASM_MAP[naj, nai], rtype)
+                r4_boundaries[(aj, ai)][face] = (ASSY_MAP[naj, nai], rtype)
 
     # ── 2. 비교 ──
     print("\n■ 방법 A (어셈블리 직접) vs 방법 B (R4 노드 로직) 비교:")
@@ -86,7 +86,7 @@ def main():
         match = d == r
         if not match:
             all_match = False
-            print(f"  ✗ ({key[0]},{key[1]}) {ASM_MAP[key]}: 직접={d}, R4={r}")
+            print(f"  ✗ ({key[0]},{key[1]}) {ASSY_MAP[key]}: 직접={d}, R4={r}")
 
     if all_match:
         print(f"  ✅ 전체 {len(direct_boundaries)}개 경계 어셈블리 완벽 일치!")
@@ -111,7 +111,7 @@ def main():
                     row += " □ "
                 else:
                     row += " ■ "
-            elif ASM_MAP[j, i] == 'o':
+            elif ASSY_MAP[j, i] == 'o':
                 row += " · "
             else:
                 row += " R "
@@ -168,7 +168,7 @@ def main():
                     rname, rtype = faces[face]
                     symbols += face.upper() if rtype == 'ortho' else face.lower()
             row += f"{symbols:4s}"
-        asm_names = " ".join(ASM_MAP[y + 5, x + 5] for x in range(5))
+        asm_names = " ".join(ASSY_MAP[y + 5, x + 5] for x in range(5))
         print(row + f"  ({asm_names})")
 
     # 경계면 집계

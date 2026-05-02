@@ -102,7 +102,7 @@
   - CMFD-only가 가진 g2 ~6.4% bias floor (NEM 보정 누락분) 가 양변에서 자동 cancel
   - NEM gap, XS staleness, 제어봉 XS 변화 모두 ε_total(t)에 흡수되어 해소
   - 양변 모두 BOC `xs_fuel` (10채널, 시점/branch 무관) 사용. `crit_Sigma_f`/`branch_Sigma_f` 미사용 (cheating 회피)
-  - `ε_total(t) = R_CMFD(φ_GT(t), xs_fuel_BOC)` 를 Phase G 전처리에서 사전 계산
+  - **2026-04-23 갱신**: Albedo α 학습 가능 → R_GT 매 batch 동적 계산 (`ε_total` 사전 저장 폐기). 상세: Physical Loss 통합 레퍼런스 §3.6.4
   - 상세: `physical loss 개선 계획/2026-03-30 Physical Loss 통합 레퍼런스.md` §3.6 신설
 
 ---
